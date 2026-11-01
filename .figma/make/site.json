@@ -1,0 +1,14 @@
+{
+  "description": "A learning companion for IDEA9106 Design Thinking tutorials.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  },
+  "title": "Studio Bridge",
+  "icons": {
+    "icon": "/assets/studio-bridge-logo.svg"
+  }
+}
