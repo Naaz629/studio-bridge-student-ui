@@ -3565,6 +3565,7 @@ export function useClassSession(identity: ClassIdentity | null) {
 import {
   createContext,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -3591,7 +3592,7 @@ function restore(): ClassIdentity | null {
     return null
   }
 }
-function useRoomValue(identity: ClassIdentity | null, leave: () => void) {
+function useRoomValue(identity: ClassIdentity | null, leave: () => void, openJoin: () => void) {
   const live = useClassSession(identity)
   const [sendError, setSendError] = useState("")
   const activityId = live.state.activityId || null
@@ -3602,7 +3603,7 @@ function useRoomValue(identity: ClassIdentity | null, leave: () => void) {
   // Event handlers doing uploads can check the latest tutor state after awaiting.
   const currentActivityId = useRef(activityId)
   currentActivityId.current = activityId
-  return { ...live, identity, api, leave, sendError, currentActivityId }
+  return { ...live, identity, api, leave, openJoin, sendError, currentActivityId }
 }
 type RoomValue = ReturnType<typeof useRoomValue>
 const RoomContext = createContext<RoomValue | null>(null)
@@ -3614,21 +3615,30 @@ export function useClassroom() {
 function JoinedClass({
   identity,
   leave,
+  openJoin,
   children,
 }: {
   identity: ClassIdentity | null
   leave: () => void
+  openJoin: () => void
   children: ReactNode
 }) {
-  const value = useRoomValue(identity, leave)
+  const value = useRoomValue(identity, leave, openJoin)
   return <RoomContext.Provider value={value}>{children}</RoomContext.Provider>
 }
 export default function ClassRoom({ children }: { children: ReactNode }) {
-  const [identity, setIdentity] = useState(restore)
-  const [demo, setDemo] = useState(false)
-  const [code, setCode] = useState("")
-  const [name, setName] = useState("")
-  const [anonymous, setAnonymous] = useState(false)
+  const [savedIdentity] = useState(restore)
+  // Opening the app always starts in Demo; saved details only prefill the join dialog.
+  const [identity, setIdentity] = useState<ClassIdentity | null>(null)
+  const [joinOpen, setJoinOpen] = useState(false)
+  const dialog = useRef<HTMLDialogElement>(null)
+  const [code, setCode] = useState(savedIdentity?.code || "")
+  const [name, setName] = useState(savedIdentity?.anonymous ? "" : savedIdentity?.name || "")
+  const [anonymous, setAnonymous] = useState(savedIdentity?.anonymous || false)
+  useEffect(() => {
+    if (joinOpen && !dialog.current?.open) dialog.current?.showModal()
+    else if (!joinOpen && dialog.current?.open) dialog.current?.close()
+  }, [joinOpen])
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const joining = useRef(false)
@@ -3639,7 +3649,7 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
       /* Local mode still works. */
     }
     setIdentity(null)
-    setDemo(false)
+    setJoinOpen(false)
     setError("")
   }
   async function join() {
@@ -3661,7 +3671,7 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
         code: row.code.toUpperCase(),
         name: anonymous ? "Anonymous" : name.trim(),
         anonymous,
-        clientId: crypto.randomUUID(),
+        clientId: savedIdentity?.code === row.code.toUpperCase() && savedIdentity.name === (anonymous ? "Anonymous" : name.trim()) && savedIdentity.anonymous === anonymous ? savedIdentity.clientId : crypto.randomUUID(),
       }
       try {
         localStorage.setItem(storageKey, JSON.stringify(next))
@@ -3669,6 +3679,7 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
         /* Continue without persistence. */
       }
       setIdentity(next)
+      setJoinOpen(false)
     } catch (e) {
       setError(
         e instanceof Error ? e.message : "Couldn’t join. Please try again.",
@@ -3678,26 +3689,24 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
       setBusy(false)
     }
   }
-  if (identity || demo)
-    return (
-      <JoinedClass
-        key={identity?.clientId || "demo"}
-        identity={identity}
-        leave={leave}
-      >
+  return (
+    <>
+      <JoinedClass key={identity?.clientId || "demo"} identity={identity} leave={leave} openJoin={() => { setError(""); setJoinOpen(true) }}>
         {children}
       </JoinedClass>
-    )
-  return (
-    <main className="class-join-page">
+      <dialog ref={dialog} className="class-join-modal" aria-labelledby="class-join-title"
+        onCancel={event => { if (busy) event.preventDefault(); else setJoinOpen(false) }}
+        onClose={() => setJoinOpen(false)}
+        onClick={event => { if (event.target === event.currentTarget && !busy) setJoinOpen(false) }}>
       <section className="class-join-card">
+        <button className="class-join-close" type="button" aria-label="Close join dialog" disabled={busy} onClick={() => setJoinOpen(false)}>×</button>
         <img
           className="class-join-logo"
           src="/assets/studio-bridge-logo.svg"
           alt="Studio Bridge"
         />
         <span className="eyebrow">YOUR STUDIO, TOGETHER</span>
-        <h1>Join your class.</h1>
+        <h1 id="class-join-title">Join your class.</h1>
         <p>Bring your questions, ideas and work into the conversation.</p>
         <form
           onSubmit={(e) => {
@@ -3763,13 +3772,15 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
         </form>
         <button
           className="class-demo-link"
-          onClick={() => setDemo(true)}
+          disabled={busy}
+          onClick={() => setJoinOpen(false)}
           type="button"
         >
-          Explore the demo
+          Continue in demo
         </button>
       </section>
-    </main>
+      </dialog>
+    </>
   )
 }
 export function ClassBadge() {
@@ -3788,7 +3799,7 @@ export function ClassBadge() {
           ? "● Connected"
           : "○ Not connected"}
       </span>
-      <button type="button" onClick={room.leave}>
+      <button type="button" onClick={room.identity ? room.leave : room.openJoin}>
         {room.identity ? "Leave class" : "Join a class"}
       </button>
       {room.sendError && (
@@ -4501,6 +4512,13 @@ export default function LivePeers({
 .class-join-card .extra-primary:hover,.tutor-activity .extra-primary:hover { background:#405b3f; }
 .class-join-card .extra-primary:disabled { opacity:.5; cursor:default; }
 .tutor-activity .extra-primary:focus-visible,.class-join-card .extra-primary:focus-visible { outline:2px solid #81977a; outline-offset:3px; }
+
+.class-join-modal { border:0; padding:20px; background:transparent; color:#293328; width:min(100%,480px); max-width:100vw; max-height:100dvh; overflow:auto; margin:auto; }
+.class-join-modal::backdrop { background:rgba(38,48,38,.28); backdrop-filter:blur(8px); }
+.class-join-modal .class-join-card { position:relative; width:100%; }
+.class-join-close { position:absolute; top:16px; right:18px; display:grid; place-items:center; width:30px; height:30px; border-radius:50%; background:#e6ebdf; color:#65785e; font-size:23px; line-height:1; }
+.class-join-close:focus-visible { outline:2px solid #638163; outline-offset:2px; }
+@media (prefers-reduced-transparency:reduce) { .class-join-modal::backdrop { backdrop-filter:none; background:#26302670; } }
 ```
 
 ## tests/create-test-class.mjs
@@ -4629,6 +4647,7 @@ try {
     .update({ state: { slide: 3, activityId: null } })
     .eq("code", code)
   await page.goto(process.env.STUDENT_TEST_URL || "http://127.0.0.1:8443/")
+  await page.getByRole("button", { name: "Join a class", exact: true }).click()
   await page.getByRole("heading", { name: "Join your class." }).waitFor()
   await page.screenshot({ path: "work/qa/join.png" })
   await page
@@ -4815,12 +4834,14 @@ try {
     .click()
   await sent("reflection")
   await page.reload()
+  await page.getByRole("button", { name: "Join a class", exact: true }).click()
+  await page.getByRole("button", { name: "Join class", exact: true }).click()
   await page
     .getByText("Class " + code, { exact: true })
     .first()
     .waitFor()
   await page.getByText("Response sent", { exact: false }).waitFor()
-  console.log("PASS reflection / reload restores class and sent response")
+  console.log("PASS reflection / rejoin restores saved details and response")
   await db
     .from("sessions")
     .update({ state: { slide: 5, activityId: null } })
@@ -4894,10 +4915,9 @@ try {
     )
   assert.equal(errors.length, 0, errors.join("\n"))
   await page.getByRole("button", { name: "Leave class", exact: true }).click()
-  await page.getByRole("heading", { name: "Join your class." }).waitFor()
+  await page.getByRole("button", { name: "Join a class", exact: true }).waitFor()
   await page.reload()
-  await page.getByRole("heading", { name: "Join your class." }).waitFor()
-  await page.getByRole("button", { name: "Explore the demo" }).click()
+  await page.getByRole("button", { name: "Join a class", exact: true }).waitFor()
   await page.locator(".slide-image").waitFor()
   console.log(
     "PASS event logs / leave class / original demo / no browser errors",
@@ -4905,4 +4925,52 @@ try {
 } finally {
   await browser.close()
 }
+```
+
+## tests/demo-entry.mjs
+
+```javascript
+import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import { chromium } from "@playwright/test"
+const { code } = JSON.parse(readFileSync("work/test-class.json", "utf8"))
+const browser = await chromium.launch({ ...(process.env.STUDIO_BRIDGE_CHROME ? { executablePath: process.env.STUDIO_BRIDGE_CHROME } : {}), headless: true })
+try {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  const errors = []
+  page.on("pageerror", e => errors.push(e.message))
+  await page.goto(process.env.STUDENT_TEST_URL || "http://127.0.0.1:8443/")
+  await page.locator(".slide-image").waitFor()
+  assert.equal(await page.getByRole("dialog").count(), 0)
+  await page.getByRole("button", { name: "Join a class", exact: true }).click()
+  await page.getByRole("dialog").waitFor()
+  await page.getByLabel("Your name", { exact: true }).fill("Modal verification")
+  await page.keyboard.press("Escape")
+  await page.getByRole("dialog").waitFor({ state: "hidden" })
+  await page.getByRole("button", { name: "Join a class", exact: true }).click()
+  assert.equal(await page.getByLabel("Your name", { exact: true }).inputValue(), "Modal verification")
+  await page.getByRole("button", { name: "Continue in demo", exact: true }).click()
+  await page.getByRole("dialog").waitFor({ state: "hidden" })
+  await page.getByRole("button", { name: "Join a class", exact: true }).click()
+  await page.getByLabel("Class code", { exact: true }).fill(code)
+  await page.screenshot({ path: "work/qa/join-modal.png" })
+  await page.getByRole("button", { name: "Join class", exact: true }).click()
+  await page.getByText("Class " + code, { exact: true }).first().waitFor()
+  await page.getByRole("dialog").waitFor({ state: "hidden" })
+  const clientId = await page.evaluate(() => JSON.parse(localStorage.getItem("studio-bridge-class")).clientId)
+  await page.reload()
+  await page.getByRole("button", { name: "Join a class", exact: true }).waitFor()
+  assert.equal(await page.getByRole("dialog").count(), 0)
+  await page.getByRole("button", { name: "Join a class", exact: true }).click()
+  assert.equal(await page.getByLabel("Your name", { exact: true }).inputValue(), "Modal verification")
+  assert.equal(await page.getByLabel("Class code", { exact: true }).inputValue(), code)
+  await page.getByRole("button", { name: "Join class", exact: true }).click()
+  await page.getByText("Class " + code, { exact: true }).first().waitFor()
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("studio-bridge-class")).clientId), clientId)
+  await page.getByRole("button", { name: "Leave class", exact: true }).click()
+  await page.getByRole("button", { name: "Join a class", exact: true }).waitFor()
+  assert.equal(await page.getByRole("dialog").count(), 0)
+  assert.equal(errors.length, 0, errors.join("\n"))
+  console.log("PASS Demo default / modal close and Escape / class join / refresh stays Demo / saved details and identity / Leave class / no browser errors")
+} finally { await browser.close() }
 ```

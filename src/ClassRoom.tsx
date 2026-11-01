@@ -1,6 +1,7 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -27,7 +28,7 @@ function restore(): ClassIdentity | null {
     return null
   }
 }
-function useRoomValue(identity: ClassIdentity | null, leave: () => void) {
+function useRoomValue(identity: ClassIdentity | null, leave: () => void, openJoin: () => void) {
   const live = useClassSession(identity)
   const [sendError, setSendError] = useState("")
   const activityId = live.state.activityId || null
@@ -38,7 +39,7 @@ function useRoomValue(identity: ClassIdentity | null, leave: () => void) {
   // Event handlers doing uploads can check the latest tutor state after awaiting.
   const currentActivityId = useRef(activityId)
   currentActivityId.current = activityId
-  return { ...live, identity, api, leave, sendError, currentActivityId }
+  return { ...live, identity, api, leave, openJoin, sendError, currentActivityId }
 }
 type RoomValue = ReturnType<typeof useRoomValue>
 const RoomContext = createContext<RoomValue | null>(null)
@@ -50,21 +51,30 @@ export function useClassroom() {
 function JoinedClass({
   identity,
   leave,
+  openJoin,
   children,
 }: {
   identity: ClassIdentity | null
   leave: () => void
+  openJoin: () => void
   children: ReactNode
 }) {
-  const value = useRoomValue(identity, leave)
+  const value = useRoomValue(identity, leave, openJoin)
   return <RoomContext.Provider value={value}>{children}</RoomContext.Provider>
 }
 export default function ClassRoom({ children }: { children: ReactNode }) {
-  const [identity, setIdentity] = useState(restore)
-  const [demo, setDemo] = useState(false)
-  const [code, setCode] = useState("")
-  const [name, setName] = useState("")
-  const [anonymous, setAnonymous] = useState(false)
+  const [savedIdentity] = useState(restore)
+  // Opening the app always starts in Demo; saved details only prefill the join dialog.
+  const [identity, setIdentity] = useState<ClassIdentity | null>(null)
+  const [joinOpen, setJoinOpen] = useState(false)
+  const dialog = useRef<HTMLDialogElement>(null)
+  const [code, setCode] = useState(savedIdentity?.code || "")
+  const [name, setName] = useState(savedIdentity?.anonymous ? "" : savedIdentity?.name || "")
+  const [anonymous, setAnonymous] = useState(savedIdentity?.anonymous || false)
+  useEffect(() => {
+    if (joinOpen && !dialog.current?.open) dialog.current?.showModal()
+    else if (!joinOpen && dialog.current?.open) dialog.current?.close()
+  }, [joinOpen])
   const [error, setError] = useState("")
   const [busy, setBusy] = useState(false)
   const joining = useRef(false)
@@ -75,7 +85,7 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
       /* Local mode still works. */
     }
     setIdentity(null)
-    setDemo(false)
+    setJoinOpen(false)
     setError("")
   }
   async function join() {
@@ -97,7 +107,7 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
         code: row.code.toUpperCase(),
         name: anonymous ? "Anonymous" : name.trim(),
         anonymous,
-        clientId: crypto.randomUUID(),
+        clientId: savedIdentity?.code === row.code.toUpperCase() && savedIdentity.name === (anonymous ? "Anonymous" : name.trim()) && savedIdentity.anonymous === anonymous ? savedIdentity.clientId : crypto.randomUUID(),
       }
       try {
         localStorage.setItem(storageKey, JSON.stringify(next))
@@ -105,6 +115,7 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
         /* Continue without persistence. */
       }
       setIdentity(next)
+      setJoinOpen(false)
     } catch (e) {
       setError(
         e instanceof Error ? e.message : "Couldn’t join. Please try again.",
@@ -114,26 +125,24 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
       setBusy(false)
     }
   }
-  if (identity || demo)
-    return (
-      <JoinedClass
-        key={identity?.clientId || "demo"}
-        identity={identity}
-        leave={leave}
-      >
+  return (
+    <>
+      <JoinedClass key={identity?.clientId || "demo"} identity={identity} leave={leave} openJoin={() => { setError(""); setJoinOpen(true) }}>
         {children}
       </JoinedClass>
-    )
-  return (
-    <main className="class-join-page">
+      <dialog ref={dialog} className="class-join-modal" aria-labelledby="class-join-title"
+        onCancel={event => { if (busy) event.preventDefault(); else setJoinOpen(false) }}
+        onClose={() => setJoinOpen(false)}
+        onClick={event => { if (event.target === event.currentTarget && !busy) setJoinOpen(false) }}>
       <section className="class-join-card">
+        <button className="class-join-close" type="button" aria-label="Close join dialog" disabled={busy} onClick={() => setJoinOpen(false)}>×</button>
         <img
           className="class-join-logo"
           src="/assets/studio-bridge-logo.svg"
           alt="Studio Bridge"
         />
         <span className="eyebrow">YOUR STUDIO, TOGETHER</span>
-        <h1>Join your class.</h1>
+        <h1 id="class-join-title">Join your class.</h1>
         <p>Bring your questions, ideas and work into the conversation.</p>
         <form
           onSubmit={(e) => {
@@ -199,13 +208,15 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
         </form>
         <button
           className="class-demo-link"
-          onClick={() => setDemo(true)}
+          disabled={busy}
+          onClick={() => setJoinOpen(false)}
           type="button"
         >
-          Explore the demo
+          Continue in demo
         </button>
       </section>
-    </main>
+      </dialog>
+    </>
   )
 }
 export function ClassBadge() {
@@ -224,7 +235,7 @@ export function ClassBadge() {
           ? "● Connected"
           : "○ Not connected"}
       </span>
-      <button type="button" onClick={room.leave}>
+      <button type="button" onClick={room.identity ? room.leave : room.openJoin}>
         {room.identity ? "Leave class" : "Join a class"}
       </button>
       {room.sendError && (

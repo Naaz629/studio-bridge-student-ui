@@ -74,6 +74,7 @@ try {
     .update({ state: { slide: 3, activityId: null } })
     .eq("code", code)
   await page.goto(process.env.STUDENT_TEST_URL || "http://127.0.0.1:8443/")
+  await page.getByRole("button", { name: "Join a class", exact: true }).click()
   await page.getByRole("heading", { name: "Join your class." }).waitFor()
   await page.screenshot({ path: "work/qa/join.png" })
   await page
@@ -260,12 +261,14 @@ try {
     .click()
   await sent("reflection")
   await page.reload()
+  await page.getByRole("button", { name: "Join a class", exact: true }).click()
+  await page.getByRole("button", { name: "Join class", exact: true }).click()
   await page
     .getByText("Class " + code, { exact: true })
     .first()
     .waitFor()
   await page.getByText("Response sent", { exact: false }).waitFor()
-  console.log("PASS reflection / reload restores class and sent response")
+  console.log("PASS reflection / rejoin restores saved details and response")
   await db
     .from("sessions")
     .update({ state: { slide: 5, activityId: null } })
@@ -339,10 +342,9 @@ try {
     )
   assert.equal(errors.length, 0, errors.join("\n"))
   await page.getByRole("button", { name: "Leave class", exact: true }).click()
-  await page.getByRole("heading", { name: "Join your class." }).waitFor()
+  await page.getByRole("button", { name: "Join a class", exact: true }).waitFor()
   await page.reload()
-  await page.getByRole("heading", { name: "Join your class." }).waitFor()
-  await page.getByRole("button", { name: "Explore the demo" }).click()
+  await page.getByRole("button", { name: "Join a class", exact: true }).waitFor()
   await page.locator(".slide-image").waitFor()
   console.log(
     "PASS event logs / leave class / original demo / no browser errors",
