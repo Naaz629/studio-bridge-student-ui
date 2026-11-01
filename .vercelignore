@@ -1,0 +1,9 @@
+node_modules
+dist
+work
+.tmp
+.DS_Store
+*.zip
+*.log
+.figaro
+.env*

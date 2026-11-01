@@ -14,7 +14,7 @@ function CameraIcon() {
   return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="m8 5 1-2h6l1 2h4a2 2 0 0 1 2 2v12H2V7a2 2 0 0 1 2-2Z"/><circle cx="12" cy="12" r="4"/></svg>
 }
 
-export default function ExtraActivity({ activity, dispatch, active }: { active: boolean; activity: ActivityRun; dispatch: (action: ActivityAction) => void }) {
+export default function ExtraActivity({ activity, dispatch, active, pending = false }: { pending?: boolean; active: boolean; activity: ActivityRun; dispatch: (action: ActivityAction) => void }) {
   const [announcement, setAnnouncement] = useState("")
   const [error, setError] = useState("")
   const [group, setGroup] = useState(activity.photo?.group || "")
@@ -107,7 +107,7 @@ export default function ExtraActivity({ activity, dispatch, active }: { active: 
     {activity.kind === "discussion" ? <>
       <div className="discussion-card-grid">
         {cards.map((card, index) => <button
-          type="button" key={card.image}
+          type="button" disabled={pending} key={card.image}
           aria-label={`Play ${card.label} card. ${card.prompt}. ${counts[index]} played.`}
           className={activity.answer === index ? "discussion-card active" : "discussion-card"}
           onClick={() => { dispatch({ type: "play", id: activity.id, card: index }); setAnnouncement(`${card.label} card played. ${card.prompt}`) }}
@@ -123,13 +123,13 @@ export default function ExtraActivity({ activity, dispatch, active }: { active: 
         <div className="artefact-photo-area">
           {cameraOpen ? <div className="artefact-camera"><video ref={video} muted playsInline aria-label="Camera preview" /><div><button type="button" className="extra-primary" onClick={capture}>Capture photo</button><button type="button" onClick={stopCamera}>Cancel</button></div></div>
             : activity.photo ? <figure className="artefact-preview"><img src={activity.photo.url} alt={activity.photo.caption || "Your group’s artefact"} /><figcaption>{activity.photo.name}</figcaption></figure>
-            : <div className="artefact-empty"><CameraIcon /><strong>Bring your group’s work into the discussion.</strong><p>A persona, sketch, affinity map or reframed brief.</p><div className="artefact-choose-actions"><button className="extra-primary" type="button" onClick={() => fileInput.current?.click()}>Choose photo</button><button type="button" onClick={startCamera} disabled={cameraLoading}>{cameraLoading ? "Opening camera…" : "Take a photo"}</button></div><small>JPG, PNG or WebP · Up to 15 MB</small></div>}
-          {activity.photo && !activity.submitted && !cameraOpen && <div className="artefact-photo-actions"><button type="button" onClick={() => fileInput.current?.click()}>Replace photo</button><button type="button" disabled={cameraLoading} onClick={startCamera}>Retake with camera</button></div>}
+            : <div className="artefact-empty"><CameraIcon /><strong>Bring your group’s work into the discussion.</strong><p>A persona, sketch, affinity map or reframed brief.</p><div className="artefact-choose-actions"><button className="extra-primary" type="button" disabled={pending} onClick={() => fileInput.current?.click()}>Choose photo</button><button type="button" onClick={startCamera} disabled={cameraLoading || pending}>{cameraLoading ? "Opening camera…" : "Take a photo"}</button></div><small>JPG, PNG or WebP · Up to 15 MB</small></div>}
+          {activity.photo && !activity.submitted && !cameraOpen && <div className="artefact-photo-actions"><button type="button" disabled={pending} onClick={() => fileInput.current?.click()}>Replace photo</button><button type="button" disabled={cameraLoading || pending} onClick={startCamera}>Retake with camera</button></div>}
         </div>
         <div className="artefact-details">
-          <label>Group name <span>(optional)</span><input disabled={activity.submitted} value={group} placeholder="e.g. Studio Team 4" onChange={event => { setGroup(event.target.value); if (activity.photo) dispatch({ type: "photo", id: activity.id, photo: { ...activity.photo, group: event.target.value } }) }}/></label>
-          <label><span className="artefact-field-title">The thinking behind it <span>(optional)</span></span><textarea disabled={activity.submitted} value={caption} placeholder="What did you make? Which research insight shaped it?" onChange={event => { setCaption(event.target.value); if (activity.photo) dispatch({ type: "photo", id: activity.id, photo: { ...activity.photo, caption: event.target.value } }) }} /></label>
-          {!activity.submitted ? <button type="button" className="extra-primary" disabled={!activity.photo || cameraOpen} onClick={() => { dispatch({ type: "submit", id: activity.id }); setAnnouncement("Your group artefact is submitted for this session.") }}>Submit artefact <span aria-hidden="true">↑</span></button> : <div className="artefact-submitted">✓ Your group’s artefact is submitted.</div>}
+          <label>Group name <span>(optional)</span><input disabled={activity.submitted || pending} value={group} placeholder="e.g. Studio Team 4" onChange={event => { setGroup(event.target.value); if (activity.photo) dispatch({ type: "photo", id: activity.id, photo: { ...activity.photo, group: event.target.value } }) }}/></label>
+          <label><span className="artefact-field-title">The thinking behind it <span>(optional)</span></span><textarea disabled={activity.submitted || pending} value={caption} placeholder="What did you make? Which research insight shaped it?" onChange={event => { setCaption(event.target.value); if (activity.photo) dispatch({ type: "photo", id: activity.id, photo: { ...activity.photo, caption: event.target.value } }) }} /></label>
+          {!activity.submitted ? <button type="button" className="extra-primary" disabled={!activity.photo || cameraOpen || pending} onClick={() => { dispatch({ type: "submit", id: activity.id }); setAnnouncement("Your group artefact is submitted for this session.") }}>{pending ? "Sending…" : "Submit artefact"} <span aria-hidden="true">↑</span></button> : <div className="artefact-submitted">✓ Your group’s artefact is submitted.</div>}
           <small>Saved for this session.</small>
         </div>
       </div>

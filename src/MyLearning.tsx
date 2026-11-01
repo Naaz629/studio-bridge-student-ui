@@ -1,3 +1,4 @@
+import { ClassBadge } from "./ClassRoom"
 import { activityAnswer, activityTemplates, type ActivityRun } from "./activity-state"
 import { useState } from "react"
 import "./my-learning.css"
@@ -35,7 +36,7 @@ function LearningIcon({ kind }: { kind: string }) {
   </svg>
 }
 
-export default function MyLearning({ entries, activities, onReviewSlide }: { entries: LearningEntry[]; activities: ActivityRun[]; onReviewSlide: (page: number) => void }) {
+export default function MyLearning({ entries, activities, onReviewSlide, sharedActivities, onShareReflection, onReviewActivity }: { entries: LearningEntry[]; activities: ActivityRun[]; onReviewSlide: (page: number) => void; sharedActivities?: LearningEntry[]; onReviewActivity?: (id: string, page: number) => void; onShareReflection?: (text: string) => Promise<string> }) {
   const [week, setWeek] = useState(6)
   const [filter, setFilter] = useState("All")
   const [reflections, setReflections] = useState<Record<string, string>>(() => {
@@ -43,17 +44,20 @@ export default function MyLearning({ entries, activities, onReviewSlide }: { ent
   })
   const [saved, setSaved] = useState(false)
   const [badge, setBadge] = useState<string | null>(null)
-  const additions = Math.max(0, entries.length - initialLearningEntries.length)
-  const completedActivities = activities.filter(activity => activity.submitted).length
-  const points = 112 + (additions + completedActivities) * 4
-  const activityEntries: LearningEntry[] = activities.map(activity => ({
+  const liveClass = sharedActivities !== undefined
+  const additions = liveClass ? entries.length : Math.max(0, entries.length - initialLearningEntries.length)
+  const completedActivities = sharedActivities ? sharedActivities.filter(activity => activity.completed).length : activities.filter(activity => activity.submitted).length
+  const [reflectionStatus, setReflectionStatus] = useState("")
+  const [reflectionBusy, setReflectionBusy] = useState(false)
+  const points = (liveClass ? 0 : 112) + (additions + completedActivities) * 4
+  const activityEntries: LearningEntry[] = sharedActivities || activities.map(activity => ({
     id: `activity-${activity.id}`, kind: "Activity", title: activityTemplates[activity.kind].title,
     detail: activity.submitted ? `Your response · ${activityAnswer(activity)}` : activityTemplates[activity.kind].description,
     slide: activity.page, week: 6, completed: activity.submitted, image: activity.submitted ? activity.photo?.url : undefined,
   }))
   const replies = entries.filter(e => e.id.startsWith("live-response")).length
   const newQuestions = entries.filter(e => e.id.startsWith("live-question")).length
-  const milestones = Math.min(12, 8 + completedActivities)
+  const milestones = Math.min(12, (liveClass ? 0 : 8) + completedActivities)
   const visible = [...entries, ...activityEntries].filter(e => e.week === week && (filter === "All" || e.kind === filter))
   const topic = weekTopics[week]
   const [draft, setDraft] = useState(reflections["6"] || "")
@@ -63,16 +67,21 @@ export default function MyLearning({ entries, activities, onReviewSlide }: { ent
     setWeek(next)
     setSaved(false)
   }
-  function saveReflection() {
+  async function saveReflection() {
+    if (reflectionBusy) return
     const next = { ...reflections, [week]: draft }
     setReflections(next)
-    localStorage.setItem("studio-bridge-reflections", JSON.stringify(next))
+    try { localStorage.setItem("studio-bridge-reflections", JSON.stringify(next)) } catch { /* The active reflection remains editable. */ }
+    if (onShareReflection) {
+      setReflectionBusy(true)
+      try { setReflectionStatus(await onShareReflection(draft)) } finally { setReflectionBusy(false) }
+    }
     setSaved(true)
   }
   return <main className="learning-page">
     <header className="learning-intro">
       <div><div className="eyebrow">IDEA9106 · DESIGN THINKING</div><h1>My Learning</h1><p>A little curiosity, a clearer perspective. See how far you’ve come.</p></div>
-      <span className="learning-term"><span className="live-dot" /> Week 6 of 12</span>
+      <div><span className="learning-term"><span className="live-dot" /> Week 6 of 12</span><ClassBadge /></div>
     </header>
     <div className="learning-columns">
       <div className="learning-overview">
@@ -91,12 +100,12 @@ export default function MyLearning({ entries, activities, onReviewSlide }: { ent
           <div className="journey-track" role="progressbar" aria-label="Learning milestones" aria-valuenow={milestones} aria-valuemin={0} aria-valuemax={12}><span style={{ width: `${milestones / 12 * 100}%` }} /></div>
           <div className="journey-labels"><strong>{milestones} milestones reached</strong><span>12 milestones</span></div>
           <div className="learning-stats">
-            <div><strong>{3 + newQuestions}</strong><span>Questions asked</span></div><div><strong>{6 + replies}</strong><span>Peer replies</span></div><div><strong>{completedActivities} / {activities.length}</strong><span>Class activities</span></div>
+            <div><strong>{(liveClass ? 0 : 3) + newQuestions}</strong><span>Questions asked</span></div><div><strong>{(liveClass ? 0 : 6) + replies}</strong><span>Peer replies</span></div><div><strong>{completedActivities} / {sharedActivities?.length ?? activities.length}</strong><span>Class activities</span></div>
           </div>
-          <div className="badge-section"><h3>Your badges <span>2 earned</span></h3>
+          <div className="badge-section"><h3>Your badges <span>{liveClass ? Number(newQuestions > 0) + Number(replies > 0) : 2} earned</span></h3>
             <div className="learning-badges">
               {[["Helpful Peer", "Supporting classmates with useful replies.", "sage"], ["Curious Mind", "Asking thoughtful questions that open a discussion.", "lavender"]].map(([name, detail, tone]) =>
-                <button type="button" key={name} className={`learning-badge ${tone}`} onClick={() => setBadge(badge === name ? null : name)} aria-expanded={badge === name}>
+                <button type="button" key={name} className={`learning-badge ${tone}`} disabled={liveClass && (name === "Helpful Peer" ? replies === 0 : newQuestions === 0)} onClick={() => setBadge(badge === name ? null : name)} aria-expanded={badge === name}>
                   <span className="badge-medal"><LearningIcon kind="badge" /></span><span><strong>{name}</strong><small>{name === "Helpful Peer" ? "Learning together" : "Keep asking why"}</small></span>
                   {badge === name && <p>{detail}</p>}
                 </button>)}
@@ -109,10 +118,10 @@ export default function MyLearning({ entries, activities, onReviewSlide }: { ent
           <button type="button" onClick={() => onReviewSlide(15)}>Revisit problem framing <span aria-hidden="true">↗</span></button>
         </section>
         <section className="learning-card class-goal">
-          <div className="learning-card-top"><h2>A shared class goal</h2><span className="learning-mini-tag">Together</span></div>
+          <div className="learning-card-top"><h2>A shared class goal</h2><span className="learning-mini-tag">{liveClass ? "Example goal" : "Together"}</span></div>
           <p>Help our studio reach <strong>100 useful answers.</strong></p>
           <div className="class-goal-progress"><progress value="72" max="100" aria-label="Class useful answers" /><strong>72<span> / 100</span></strong></div>
-          <small>Every helpful reply makes learning a little easier for someone.</small>
+          <small>{liveClass ? "Example progress · helpful-reply tracking is not provided by this class yet." : "Every helpful reply makes learning a little easier for someone."}</small>
         </section>
       </div>
       <div className="learning-week">
@@ -123,7 +132,7 @@ export default function MyLearning({ entries, activities, onReviewSlide }: { ent
           <div className="learning-entry-list">
             {visible.map(entry => <article className="learning-entry" key={entry.id}>
               <span className={`learning-entry-icon ${entry.kind.toLowerCase()}`}><LearningIcon kind={entry.kind} /></span>
-              <div><div className="learning-entry-meta"><small>{entry.kind}</small>{entry.kind === "Activity" && <span className={entry.completed ? "activity-record-status done" : "activity-record-status"}>{entry.completed ? "Submitted" : "To do"}</span>}</div><h3>{entry.title}</h3><p>{entry.detail}</p>{entry.image && <img className="learning-artefact-thumbnail" src={entry.image} alt="Your submitted group artefact" />}{week === 6 && <button type="button" onClick={() => onReviewSlide(entry.slide)}>{entry.kind === "Activity" ? entry.completed ? "View response" : "Open activity" : "View slide"} · Slide {entry.slide} <span aria-hidden="true">↗</span></button>}</div>
+              <div><div className="learning-entry-meta"><small>{entry.kind}</small>{entry.kind === "Activity" && <span className={entry.completed ? "activity-record-status done" : "activity-record-status"}>{entry.completed ? "Submitted" : "To do"}</span>}</div><h3>{entry.title}</h3><p>{entry.detail}</p>{entry.image && <img className="learning-artefact-thumbnail" src={entry.image} alt="Your submitted group artefact" />}{week === 6 && <button type="button" onClick={() => entry.kind === "Activity" && onReviewActivity ? onReviewActivity(entry.id, entry.slide) : onReviewSlide(entry.slide)}>{entry.kind === "Activity" ? entry.completed ? "View response" : "Open activity" : "View slide"} · Slide {entry.slide} <span aria-hidden="true">↗</span></button>}</div>
             </article>)}
             {!visible.length && <p className="learning-empty">No {filter.toLowerCase()}s recorded for this week yet.</p>}
           </div>
@@ -134,7 +143,7 @@ export default function MyLearning({ entries, activities, onReviewSlide }: { ent
           <div className="learning-outcome"><span className="eyebrow">LEARNING OUTCOME</span><p>{topic.outcome}</p><span className="concept-chain">{topic.concept}</span></div>
           <label htmlFor="learning-reflection">What changed in your understanding?</label>
           <textarea id="learning-reflection" value={draft} onChange={e => { setDraft(e.target.value); setSaved(false) }} placeholder="One thing I understand differently now is… I could apply this by…" />
-          <div className="reflection-footer"><span role="status">{saved ? "Reflection saved on this device" : "Only visible to you"}</span><button type="button" disabled={!draft.trim()} onClick={saveReflection}>{saved ? "Saved ✓" : "Save reflection"}</button></div>
+          <div className="reflection-footer"><span role="status">{reflectionStatus || (saved ? "Reflection saved on this device" : onShareReflection ? "Shared with your tutor when saved" : "Only visible to you")}</span><button type="button" disabled={!draft.trim() || reflectionBusy} onClick={() => void saveReflection()}>{reflectionBusy ? "Sending…" : saved ? "Saved ✓" : onShareReflection ? "Save & share reflection" : "Save reflection"}</button></div>
         </section>
       </div>
     </div>
