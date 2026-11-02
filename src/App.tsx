@@ -1341,7 +1341,7 @@ function LiveView({
               <div className="feedback-actions">
                 {lessonReactions.map((reaction) => (
                   <button
-                    aria-label={`${reaction.label}, ${feedbackCounts[reaction.id]} reactions`}
+                    aria-label={reaction.label}
                     aria-pressed={feedback === reaction.id}
                     className={feedback === reaction.id ? "selected" : ""}
                     key={reaction.id}
@@ -1352,9 +1352,6 @@ function LiveView({
                     <span aria-hidden="true" className="feedback-emoji">
                       {reaction.emoji}
                     </span>
-                    <small aria-hidden="true" className="reaction-live-count" key={reactionPops[reaction.id] || 0}>
-                      {feedbackCounts[reaction.id]}
-                    </small>
                     {reactionBursts.filter(burst => burst.reaction === reaction.id).map(burst =>
                       <span className="reaction-burst" key={burst.id} aria-hidden="true">
                         {[-2, -1, 0, 1, 2].map((direction, index) =>
@@ -1438,7 +1435,7 @@ function LiveView({
                       aria-label="Upvote question"
                       type="button"
                     >
-                      <span className="up-arrow" aria-hidden="true">↑</span>
+                      <span className="up-arrow" aria-hidden="true">↑</span> {question.votes}
                     </button>
                     <button type="button" aria-expanded={replyQuestion === question.id} aria-controls={`question-reply-${question.id}`} onClick={() => setReplyQuestion(current => current === question.id ? null : question.id)}>
                       <Icon name="bubble" size={14} /> Reply{questionReplies[question.id]?.length ? ` · ${questionReplies[question.id].length}` : ""}
