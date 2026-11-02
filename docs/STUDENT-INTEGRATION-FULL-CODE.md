@@ -1,6 +1,6 @@
-# Studio Bridge — full integration source
+# Studio Bridge — current integration source
 
-Full contents of application, configuration and test files created or changed for the Supabase integration. See [CLASSROOM-INTEGRATION.md](CLASSROOM-INTEGRATION.md) for setup, validation, and remaining Tutor UI mappings. Local `.env.local` and credentials are intentionally excluded.
+Full contents of the application, configuration and test files for the shared classroom integration. See [CLASSROOM-INTEGRATION.md](CLASSROOM-INTEGRATION.md). Credentials and generated files are excluded.
 
 ## package.json
 
@@ -16,7 +16,7 @@ Full contents of application, configuration and test files created or changed fo
     "preview": "vite preview",
     "format": "oxfmt",
     "test:classroom:setup": "node tests/create-test-class.mjs",
-    "test:classroom": "node tests/classroom.integration.mjs"
+    "test:classroom": "node tests/shared-classroom.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",
@@ -1102,6 +1102,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 ## src/App.tsx
 
 ```tsx
+import { displayStudent } from "./class-display"
+import { SharedText } from "./ClassResults"
 import { ClassBadge, useClassroom } from "./ClassRoom"
 import TutorActivity from "./TutorActivity"
 import type { QuestionRow } from "./class-types"
@@ -1329,8 +1331,8 @@ type ClassroomQuestion = {
   translation?: string
   sourceLanguage?: string
 }
-function classroomQuestion(row: QuestionRow): ClassroomQuestion {
-  const name = row.anonymous ? "Anonymous" : row.student || "Student"
+function classroomQuestion(row: QuestionRow, currentIdentity?: import("./class-types").ClassIdentity | null): ClassroomQuestion {
+  const name = row.anonymous ? "Anonymous" : displayStudent(row.student, currentIdentity || null)
   return { id: row.id, dbId: row.id, slide: row.slide || 1, name,
     initials: name.split(" ").map(part => part[0]).join("").slice(0,2), time: "a moment",
     text: row.text, translation: row.text_en || undefined, sourceLanguage: row.lang?.startsWith("zh") ? "Chinese" : row.lang || undefined,
@@ -2067,7 +2069,7 @@ function LiveView({
   const [originalQuestions, setOriginalQuestions] = useState<(number | string)[]>([])
   const [replyQuestion, setReplyQuestion] = useState<number | string | null>(null)
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({})
-  const [questionReplies, setQuestionReplies] = useState<Record<string, { id: string; text: string; name: string }[]>>({})
+  const [questionReplies, setQuestionReplies] = useState<Record<string, { id: string; text: string; name: string; english?: string }[]>>({})
   const [identity, setIdentity] = useState<"anonymous" | "named">(room.identity?.anonymous === false ? "named" : "anonymous")
   const [questionLanguage, setQuestionLanguage] = useState<"zh" | "en">("en")
   const [identityMenuOpen, setIdentityMenuOpen] = useState(false)
@@ -2127,14 +2129,23 @@ function LiveView({
   useEffect(() => {
     if (liveMode) setQuestionList(current => [
       ...current.filter(question => question.sendError && !room.questions.some(row => row.id === question.id)),
-      ...room.questions.map(classroomQuestion),
+      ...room.questions.map(row => classroomQuestion(row, room.identity)),
     ])
   }, [liveMode, room.questions])
+  const previousReactionCounts = useRef<Record<string, number> | null>(null)
+  const [reactionPops, setReactionPops] = useState<Record<string, number>>({})
   useEffect(() => {
     if (!liveMode) return
     const map = { got: "understood", think: "thinking", confused: "confused", insight: "insightful", applause: "applause" } as const
     const counts = { understood: 0, thinking: 0, confused: 0, insightful: 0, applause: 0 }
     for (const reaction of room.reactions) if (map[reaction.kind]) counts[map[reaction.kind]]++
+    const previous = previousReactionCounts.current
+    if (previous) setReactionPops(current => {
+      const next = { ...current }
+      for (const key of Object.keys(counts) as LessonReaction[]) if (counts[key] > previous[key]) next[key] = (next[key] || 0) + 1
+      return next
+    })
+    previousReactionCounts.current = counts
     setFeedbackCounts(counts)
   }, [liveMode, room.reactions])
 
@@ -2157,7 +2168,7 @@ function LiveView({
     }, 1900)
     burstTimers.current.add(timer)
     if (feedback === next) return
-    setFeedbackCounts((current) => {
+    if (!liveMode) setFeedbackCounts((current) => {
       const updated = { ...current, [next]: current[next] + 1 }
       if (feedback) updated[feedback] = Math.max(0, current[feedback] - 1)
       return updated
@@ -2185,28 +2196,28 @@ function LiveView({
     questionSending.current = true
     try {
       const result = await room.api.askQuestion({ id: String(id), text, anonymous, slide: viewedSlide, lang: /[\u3400-\u9fff]/.test(text) ? "zh" : questionLanguage })
-      if (result.data) { setQuestionList(current => [classroomQuestion(result.data!), ...current.filter(q => q.id !== id)]); notify("Your question was sent to your tutor.") }
+      if (result.data) { setQuestionList(current => [classroomQuestion(result.data!, room.identity), ...current.filter(q => q.id !== id)]); notify("Your question was sent to your tutor.") }
       else notify("Question kept on this device. Retry to send.")
     } finally { questionSending.current = false }
   }
   async function retryQuestion(question: ClassroomQuestion) {
     const result = await room.api.askQuestion({ id: String(question.id), text: question.text, anonymous: question.name === "Anonymous", slide: question.slide, lang: /[\u3400-\u9fff]/.test(question.text) ? "zh" : "en" })
-    if (result.data) setQuestionList(current => current.map(q => q.id === question.id ? classroomQuestion(result.data!) : q))
+    if (result.data) setQuestionList(current => current.map(q => q.id === question.id ? classroomQuestion(result.data!, room.identity) : q))
   }
   async function voteQuestion(question: ClassroomQuestion) {
     if (!room.identity) { setQuestionList(current => current.map(q => q.id === question.id ? { ...q, votes: q.votes + 1 } : q)); return }
     if (!question.dbId) return
     const result = await room.api.upvoteQuestion(question.dbId)
-    if (result.data) setQuestionList(current => current.map(q => q.id === question.id ? classroomQuestion(result.data!) : q))
+    if (result.data) setQuestionList(current => current.map(q => q.id === question.id ? classroomQuestion(result.data!, room.identity) : q))
   }
 
   useEffect(() => {
     if (!liveMode) return
-    const grouped: Record<string, { id: string; text: string; name: string }[]> = {}
+    const grouped: Record<string, { id: string; text: string; name: string; english?: string }[]> = {}
     for (const row of room.responses) {
-      if (row.kind !== "peer_reply" || typeof row.payload.parentId !== "string") continue
-      const parent = row.payload.parentId
-      ;(grouped[parent] ||= []).push({ id: row.id, text: String(row.payload.text || ""), name: row.student || "Anonymous" })
+      if (row.kind !== "qa_reply" || typeof row.payload.questionId !== "string") continue
+      const parent = row.payload.questionId
+      ;(grouped[parent] ||= []).push({ id: row.id, text: String(row.payload.text || ""), english: typeof row.payload.text_en === "string" ? row.payload.text_en : undefined, name: displayStudent(row.student, room.identity, row.payload.clientId) })
     }
     setQuestionReplies(current => {
       const next = { ...current }
@@ -2222,9 +2233,10 @@ function LiveView({
       ...current,
       [question.id]: [...(current[question.id] || []), { id, text, name: identity === "anonymous" ? "You · Anonymous" : `You · ${studentName}` }],
     }))
-    if (room.identity) {
-      if (room.state.activityId) void room.api.submitResponse({ id, activityId: room.state.activityId, kind: "peer_reply", payload: { parentId: question.dbId || question.id, text } })
-      else notify("Reply kept on this device. Your tutor hasn’t opened a reply activity.")
+    if (room.identity && question.dbId) {
+      void room.api.replyToQuestion({ id, questionId: question.dbId, text }).then(result => {
+        if (result.error) { setReplyDrafts(current => ({ ...current, [question.id]: text })); notify("Reply kept on this device. Please retry when connected.") }
+      })
     }
     setReplyDrafts(current => ({ ...current, [question.id]: "" }))
     onLearningEntry({ id: `live-response-${id}`, kind: "Response", title: text, detail: `Your reply to ${question.name} · ${question.translation || question.text}`, slide: question.slide, week: 6 })
@@ -2412,7 +2424,7 @@ function LiveView({
                     <span aria-hidden="true" className="feedback-emoji">
                       {reaction.emoji}
                     </span>
-                    <small aria-hidden="true">
+                    <small aria-hidden="true" className="reaction-live-count" key={reactionPops[reaction.id] || 0}>
                       {feedbackCounts[reaction.id]}
                     </small>
                     {reactionBursts.filter(burst => burst.reaction === reaction.id).map(burst =>
@@ -2518,13 +2530,14 @@ function LiveView({
                   </div>
                   </div>
 
+                  {replyQuestion !== question.id && questionReplies[question.id]?.length > 0 && <div className="question-replies classroom-inline-replies">{questionReplies[question.id].map(reply => <div className="question-reply-message" key={reply.id}><small>{reply.name}</small><SharedText text={reply.text} english={reply.english} /></div>)}</div>}
                   {replyQuestion === question.id && (
                     <div className="question-reply-panel" id={`question-reply-${question.id}`}>
                       <div className="question-replies" aria-live="polite">
                         {(questionReplies[question.id] || []).map(reply => (
                           <div className="question-reply-message" key={reply.id}>
                             <small>{reply.name}</small>
-                            <p>{reply.text}</p>
+                            <SharedText text={reply.text} english={reply.english} />
                           </div>
                         ))}
                       </div>
@@ -2720,7 +2733,7 @@ export default function App() {
   let ownedQuestionIds: string[] = []
   try { ownedQuestionIds = JSON.parse(localStorage.getItem(`studio-bridge-questions:${room.identity?.clientId}`) || "[]") } catch { /* Optional history. */ }
   const restoredQuestions: LearningEntry[] = room.questions.filter(question => ownedQuestionIds.includes(question.id)).map(question => ({ id: `live-question-${question.id}`, kind: "Question", title: question.text_en || question.text, detail: question.status === "ans" ? "Your question · Answered in class" : "Your question · Shared in class", slide: question.slide || 1, week: room.session?.week || 6 }))
-  const personalEntries: LearningEntry[] = room.identity ? room.responses.filter(row => row.payload.clientId === room.identity?.clientId && row.kind === "peer_reply").map(row => ({ id: `live-response-${row.id}`, kind: "Response", title: String(row.payload.text || ""), detail: "Your reply · Shared in class", slide: room.activities.find(a => a.id === row.activity_id)?.slide || 1, week: room.session?.week || 6 })) : []
+  const personalEntries: LearningEntry[] = room.identity ? room.responses.filter(row => row.payload.clientId === room.identity?.clientId && ["peer_reply", "qa_reply"].includes(row.kind)).map(row => ({ id: `live-response-${row.id}`, kind: "Response", title: String(row.payload.text || ""), detail: "Your reply · Shared in class", slide: room.activities.find(a => a.id === row.activity_id)?.slide || 1, week: room.session?.week || 6 })) : []
   const [activities, dispatchActivity] = useReducer(activityReducer, initialActivities)
   const [section, setSection] = useState<Section>("live")
   const [questionsOpen, setQuestionsOpen] = useState(true)
@@ -3302,24 +3315,22 @@ export function createClassApi(
         "question_upvoted",
         { question: id },
         async () => {
-          const old = await supabase!
-            .from("questions")
-            .select("upvotes")
-            .eq("session", identity!.code)
-            .eq("id", id)
-            .single()
-          if (old.error) throw old.error
-          const next = await supabase!
-            .from("questions")
-            .update({ upvotes: old.data.upvotes + 1 })
-            .eq("session", identity!.code)
-            .eq("id", id)
-            .select()
-            .single()
+          const existing = await supabase!.from("questions").select("id").eq("session", identity!.code).eq("id", id).single()
+          if (existing.error) throw existing.error
+          const vote = await supabase!.rpc("upvote_question", { qid: id })
+          if (vote.error) throw vote.error
+          const next = await supabase!.from("questions").select().eq("session", identity!.code).eq("id", id).single()
           if (next.error) throw next.error
           return next.data as QuestionRow
         },
       )
+    },
+    replyToQuestion(input: { id: string; questionId: string; text: string }) {
+      return logged<ResponseRow>("response_submitted", { response: input.id, kind: "qa_reply", questionId: input.questionId }, async () => {
+        const parent = await supabase!.from("questions").select("id").eq("session", identity!.code).eq("id", input.questionId).single()
+        if (parent.error) throw parent.error
+        return insertOnce("responses", { id: input.id, session: identity!.code, activity_id: activityId || "none", kind: "qa_reply", student: actor, payload: { questionId: input.questionId, text: input.text, lang: /[\u3400-\u9fff]/.test(input.text) ? "zh" : "en", clientId: identity!.clientId } })
+      })
     },
     sendReaction(kind: ReactionKind) {
       return logged("reaction_sent", { kind }, async () => {
@@ -3458,6 +3469,15 @@ export function useClassSession(identity: ClassIdentity | null) {
       request = 0,
       subscribed = false
     const code = identity.code
+    async function readRows(table: string) {
+      const data: unknown[] = []
+      for (let from = 0; ; from += 1000) {
+        const page = await client!.from(table).select("*").eq("session", code).order("created_at", { ascending: table !== "questions" }).order("id").range(from, from + 999)
+        if (page.error) throw page.error
+        data.push(...page.data)
+        if (page.data.length < 1000) return { data, error: null }
+      }
+    }
     async function refresh() {
       const version = ++request
       try {
@@ -3467,26 +3487,7 @@ export function useClassSession(identity: ClassIdentity | null) {
             .select("code,unit,week,state")
             .eq("code", code)
             .single(),
-          client!
-            .from("activities")
-            .select("*")
-            .eq("session", code)
-            .order("created_at"),
-          client!
-            .from("questions")
-            .select("*")
-            .eq("session", code)
-            .order("created_at", { ascending: false }),
-          client!
-            .from("responses")
-            .select("*")
-            .eq("session", code)
-            .order("created_at"),
-          client!
-            .from("reactions")
-            .select("*")
-            .eq("session", code)
-            .order("created_at"),
+          readRows("activities"), readRows("questions"), readRows("responses"), readRows("reactions"),
         ])
         if (!active || version !== request) return
         if (results.some((r) => r.error)) throw new Error("Class unavailable")
@@ -3514,15 +3515,20 @@ export function useClassSession(identity: ClassIdentity | null) {
           filter: `code=eq.${code}`,
         },
         (p) => {
-          if (active && p.new && "code" in p.new) setSession(p.new as ClassRow)
+          if (active && p.new && "code" in p.new) { request++; setSession(p.new as ClassRow); scheduleRefresh() }
         },
       )
+    let refreshTimer = 0
+    function scheduleRefresh() {
+      window.clearTimeout(refreshTimer)
+      refreshTimer = window.setTimeout(() => { if (active) void refresh() }, 80)
+    }
     for (const table of ["activities", "questions", "responses", "reactions"]) {
       channel.on(
         "postgres_changes",
         { event: "*", schema: "public", table, filter: `session=eq.${code}` },
         () => {
-          void refresh()
+          scheduleRefresh()
         },
       )
     }
@@ -3541,6 +3547,7 @@ export function useClassSession(identity: ClassIdentity | null) {
       active = false
       request++
       window.clearInterval(interval)
+      window.clearTimeout(refreshTimer)
       window.removeEventListener("online", refresh)
       window.removeEventListener("offline", offline)
       void client.removeChannel(channel)
@@ -3559,9 +3566,26 @@ export function useClassSession(identity: ClassIdentity | null) {
 }
 ```
 
+## src/class-display.ts
+
+```typescript
+import type { ClassIdentity, ResponseRow } from "./class-types"
+export const DEMO_CLASS_CODE = import.meta.env.VITE_DEMO_CLASS_CODE || "DEMO"
+export function displayStudent(name: string | null, identity: ClassIdentity | null, clientId?: unknown) {
+  if (!name || name === "Anonymous") return "Anonymous"
+  if (clientId === identity?.clientId || name === identity?.name) return name
+  const parts = name.trim().split(/\s+/)
+  return parts.length > 1 ? `${parts[0]} ${parts.at(-1)![0]}.` : parts[0]
+}
+export function ownResponse(row: ResponseRow, identity: ClassIdentity | null) {
+  return !!identity && row.payload.clientId === identity.clientId
+}
+```
+
 ## src/ClassRoom.tsx
 
 ```tsx
+import { DEMO_CLASS_CODE } from "./class-display"
 import {
   createContext,
   useContext,
@@ -3572,7 +3596,7 @@ import {
   type ReactNode,
 } from "react"
 import { createClassApi } from "./class-api"
-import { findClass, useClassSession } from "./class-session"
+import { useClassSession } from "./class-session"
 import type { ClassIdentity } from "./class-types"
 import { supabase } from "./supabase"
 import "./classroom.css"
@@ -3603,7 +3627,11 @@ function useRoomValue(identity: ClassIdentity | null, leave: () => void, openJoi
   // Event handlers doing uploads can check the latest tutor state after awaiting.
   const currentActivityId = useRef(activityId)
   currentActivityId.current = activityId
-  return { ...live, identity, api, leave, openJoin, sendError, currentActivityId }
+  const activeNames = new Set([...live.questions, ...live.reactions, ...live.responses]
+    .filter(row => Date.parse(row.created_at) > Date.now() - 5 * 60 * 1000)
+    .map(row => row.student).filter((name): name is string => !!name && name !== identity?.name))
+  const activeStudents = activeNames.size + (identity ? 1 : 0)
+  return { ...live, identity, api, leave, openJoin, sendError, currentActivityId, activeStudents }
 }
 type RoomValue = ReturnType<typeof useRoomValue>
 const RoomContext = createContext<RoomValue | null>(null)
@@ -3628,11 +3656,13 @@ function JoinedClass({
 }
 export default function ClassRoom({ children }: { children: ReactNode }) {
   const [savedIdentity] = useState(restore)
-  // Opening the app always starts in Demo; saved details only prefill the join dialog.
-  const [identity, setIdentity] = useState<ClassIdentity | null>(null)
+  const [identity, setIdentity] = useState<ClassIdentity | null>(() => {
+    const current = savedIdentity ? { ...savedIdentity, code: DEMO_CLASS_CODE } : { code: DEMO_CLASS_CODE, name: "Anonymous", anonymous: true, clientId: crypto.randomUUID() }
+    try { localStorage.setItem(storageKey, JSON.stringify(current)) } catch { /* In-memory fallback. */ }
+    return current
+  })
   const [joinOpen, setJoinOpen] = useState(false)
   const dialog = useRef<HTMLDialogElement>(null)
-  const [code, setCode] = useState(savedIdentity?.code || "")
   const [name, setName] = useState(savedIdentity?.anonymous ? "" : savedIdentity?.name || "")
   const [anonymous, setAnonymous] = useState(savedIdentity?.anonymous || false)
   useEffect(() => {
@@ -3654,10 +3684,6 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
   }
   async function join() {
     if (joining.current) return
-    if (!/^[A-Z0-9]{4}$/i.test(code.trim())) {
-      setError("Enter the four-character class code from your tutor.")
-      return
-    }
     if (!anonymous && !name.trim()) {
       setError("Enter your name or choose Anonymous.")
       return
@@ -3666,12 +3692,11 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
     setBusy(true)
     setError("")
     try {
-      const row = await findClass(code.trim())
       const next = {
-        code: row.code.toUpperCase(),
+        code: DEMO_CLASS_CODE,
         name: anonymous ? "Anonymous" : name.trim(),
         anonymous,
-        clientId: savedIdentity?.code === row.code.toUpperCase() && savedIdentity.name === (anonymous ? "Anonymous" : name.trim()) && savedIdentity.anonymous === anonymous ? savedIdentity.clientId : crypto.randomUUID(),
+        clientId: identity?.clientId || savedIdentity?.clientId || crypto.randomUUID(),
       }
       try {
         localStorage.setItem(storageKey, JSON.stringify(next))
@@ -3706,8 +3731,8 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
           alt="Studio Bridge"
         />
         <span className="eyebrow">YOUR STUDIO, TOGETHER</span>
-        <h1 id="class-join-title">Join your class.</h1>
-        <p>Bring your questions, ideas and work into the conversation.</p>
+        <h1 id="class-join-title">Your classroom name.</h1>
+        <p>You’re joining the shared live classroom. Choose how classmates see you.</p>
         <form
           onSubmit={(e) => {
             e.preventDefault()
@@ -3733,25 +3758,6 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
             />{" "}
             Join as Anonymous
           </label>
-          <label htmlFor="class-code">Class code</label>
-          <input
-            id="class-code"
-            className="class-code-input"
-            maxLength={4}
-            autoCapitalize="characters"
-            autoComplete="off"
-            spellCheck={false}
-            value={code}
-            disabled={busy}
-            onChange={(e) =>
-              setCode(e.target.value.replace(/[^a-z0-9]/gi, "").toUpperCase())
-            }
-            placeholder="K7QF"
-            aria-describedby="class-code-hint"
-          />
-          <small id="class-code-hint">
-            Ask your tutor for the four-character code.
-          </small>
           {error && (
             <p className="class-join-error" role="alert">
               {error}
@@ -3767,7 +3773,7 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
             disabled={busy || !supabase}
             type="submit"
           >
-            {busy ? "Joining…" : "Join class"} <span aria-hidden="true">→</span>
+            {busy ? "Joining…" : "Save & connect"} <span aria-hidden="true">→</span>
           </button>
         </form>
         <button
@@ -3788,7 +3794,7 @@ export function ClassBadge() {
   return (
     <div className="class-badge-row">
       <span className="class-code-chip">
-        {room.identity ? `Class ${room.identity.code}` : "Demo"}
+        {room.identity ? "Live class" : "Demo"}
       </span>
       <span
         className="class-connection"
@@ -3799,6 +3805,7 @@ export function ClassBadge() {
           ? "● Connected"
           : "○ Not connected"}
       </span>
+      {room.identity && <><span className="class-presence"><span className="live-dot" /> {room.activeStudents} in class</span><button type="button" onClick={room.openJoin}>Your name</button></>}
       <button type="button" onClick={room.identity ? room.leave : room.openJoin}>
         {room.identity ? "Leave class" : "Join a class"}
       </button>
@@ -3812,9 +3819,52 @@ export function ClassBadge() {
 }
 ```
 
+## src/ClassResults.tsx
+
+```tsx
+import { useState } from "react"
+import { useClassroom } from "./ClassRoom"
+import { displayStudent, ownResponse } from "./class-display"
+import type { ConceptQuestion, ResponseRow } from "./class-types"
+
+export function SharedText({ text, english }: { text: string; english?: string }) {
+  const [original, setOriginal] = useState(false)
+  return <><p>{english || text}</p>{english && english !== text && <div className="question-translation-info"><span>Translated from Chinese</span><button type="button" onClick={() => setOriginal(!original)}>{original ? "Hide original" : "View original"}</button></div>}{original && <p lang="zh-CN" className="shared-original">{text}</p>}</>
+}
+export function ResponseList({ rows, title }: { rows: ResponseRow[]; title: string }) {
+  const room = useClassroom()
+  const [all, setAll] = useState(false)
+  const others = rows.filter(row => !ownResponse(row, room.identity)).slice().reverse()
+  return <section className="class-results" aria-label={title}><h4>{title} <small>{others.length}</small></h4>
+    {others.length ? (all ? others : others.slice(0,3)).map(row => <article className="class-response" key={row.id}><strong>{displayStudent(row.student, room.identity, row.payload.clientId)}</strong><SharedText text={String(row.payload.text || "")} english={typeof row.payload.text_en === "string" ? row.payload.text_en : undefined} /></article>) : <p>Classmates’ responses will appear here.</p>}
+    {others.length > 3 && <button className="class-results-more" type="button" onClick={() => setAll(!all)}>{all ? "Show fewer" : `View all ${others.length}`}</button>}
+  </section>
+}
+export default function ClassResults({ activityId, q, question, reflection = false, answer }: { activityId: string; q: number; question: ConceptQuestion; reflection?: boolean; answer: unknown }) {
+  const room = useClassroom()
+  const rows = room.responses.filter(row => row.activity_id === activityId && (reflection ? row.kind === "reflection" : row.payload.q === q))
+  if (question.type === "mc") {
+    const counts = (question.options || []).map((_, index) => rows.filter(row => row.kind === "choice" && row.payload.answer === index).length)
+    const total = counts.reduce((sum,n) => sum+n,0)
+    return <section className="class-results" aria-label="Class results"><h4>Class results <small>{total} responses</small></h4>{question.options?.map((option,index) => <div className="class-result-bar" key={index}><div><span>{String.fromCharCode(65+index)} · {option.t}{answer === index ? " · Your answer" : ""}</span><b>{total ? Math.round(counts[index]/total*100) : 0}%</b></div><progress aria-label={option.t} value={counts[index]} max={total || 1} /><small>{counts[index]} responses</small></div>)}</section>
+  }
+  if (question.type === "scale") {
+    const values = rows.filter(row => row.kind === "rating" && typeof row.payload.answer === "number" && row.payload.answer >= 1 && row.payload.answer <=5).map(row => Number(row.payload.answer))
+    return <section className="class-results" aria-label="Class average"><h4>Class average <small>{values.length} responses</small></h4><strong className="class-average">{values.length ? (values.reduce((sum,n) => sum+n,0)/values.length).toFixed(1) : "—"}<small> / 5</small></strong><p>Your answer: {String(answer)} / 5</p></section>
+  }
+  return <><div className="class-own-answer"><small>Your response</small><p>{String(answer)}</p></div><ResponseList rows={rows.filter(row => row.kind === (reflection ? "reflection" : "open"))} title={reflection ? "Classmates’ reflections" : "Classmates’ answers"} /></>
+}
+export function ArtefactGallery({ activityId }: { activityId: string }) {
+  const room = useClassroom()
+  const rows = room.responses.filter(row => row.activity_id === activityId && row.kind === "artefact" && !ownResponse(row,room.identity) && typeof row.payload.url === "string" && /^https?:\/\//.test(row.payload.url)).slice().reverse()
+  return <section className="class-artefact-gallery" aria-label="Class artefacts"><h3>Made by your classmates</h3>{!rows.length && <p>Classmates’ artefacts will appear here.</p>}<div>{rows.map(row => <figure key={row.id}><img src={String(row.payload.url)} alt={String(row.payload.name || "Classmate’s artefact")} loading="lazy" /><figcaption><strong>{displayStudent(row.student,room.identity,row.payload.clientId)}</strong>{row.team && <small>{row.team}</small>}<p>{String(row.payload.caption || "")}</p></figcaption></figure>)}</div></section>
+}
+```
+
 ## src/TutorActivity.tsx
 
 ```tsx
+import ClassResults, { ArtefactGallery } from "./ClassResults"
 import { useEffect, useReducer, useRef, useState } from "react"
 import { useClassroom } from "./ClassRoom"
 import {
@@ -3874,6 +3924,7 @@ export default function TutorActivity({
   const key = `studio-bridge-activity:${identity.code}:${identity.clientId}:${activity.id}`
   const [q, setQ] = useState(0)
   const [showPeers, setShowPeers] = useState(false)
+  const [showGallery, setShowGallery] = useState(false)
   const [answers, setAnswers] = useState<Record<string, number | string>>(
     () => {
       try {
@@ -3914,7 +3965,7 @@ export default function TutorActivity({
   )
   const sent = new Set([
     ...localSent,
-    ...own.map((r) =>
+    ...own.filter(r => ["choice", "rating", "open", "reflection", "discussion", "artefact"].includes(r.kind)).map((r) =>
       r.kind === "reflection" ? "reflection" : String(r.payload.q ?? r.kind),
     ),
   ])
@@ -3939,7 +3990,7 @@ export default function TutorActivity({
   const previous = own.find((r) =>
     activity.kind === "reflection"
       ? r.kind === "reflection"
-      : r.payload.q === index,
+      : ["choice", "rating", "open"].includes(r.kind) && r.payload.q === index,
   )
   const answer =
     answers[answerKey] ??
@@ -4150,7 +4201,7 @@ export default function TutorActivity({
   if (activity.kind === "discussion" || activity.kind === "artefact") {
     const saved = own.find((r) => r.kind === "artefact")
     const cardCounts = [0, 0, 0, 0, 0]
-    for (const response of room.responses)
+    for (const response of own)
       if (
         response.activity_id === activity.id &&
         response.kind === "discussion" &&
@@ -4184,12 +4235,11 @@ export default function TutorActivity({
           minHeight: 0,
         }}
       >
-        <ExtraActivity
-          activity={displayRun}
-          dispatch={(action) => void dispatchExtra(action)}
-          active={true}
-          pending={busy || !isLive}
-        />
+        {activity.kind === "artefact" && <div className="class-gallery-switch"><button type="button" onClick={() => setShowGallery(!showGallery)}>{showGallery ? "← Your artefact" : `Class artefacts · ${room.responses.filter(row => row.activity_id === activity.id && row.kind === "artefact" && row.payload.clientId !== identity.clientId).length}`}</button></div>}
+        <div className="class-extra-form" style={{ display: showGallery ? "none" : "flex" }}>
+          <ExtraActivity activity={displayRun} dispatch={action => void dispatchExtra(action)} active={!showGallery} pending={busy || !isLive} />
+        </div>
+        {showGallery && <ArtefactGallery activityId={activity.id} />}
         <div style={{ padding: "0 28px 12px" }}>{statusFooter(extraKind)}</div>
       </div>
     )
@@ -4231,7 +4281,7 @@ export default function TutorActivity({
           </p>
         )
       )}
-      {question.type === "mc" ? (
+      {!sent.has(answerKey) && (question.type === "mc" ? (
         <div
           className="tutor-choices"
           role="group"
@@ -4294,7 +4344,8 @@ export default function TutorActivity({
           }}
           placeholder={question.hint || "Share your thoughts…"}
         />
-      )}
+      ))}
+      {sent.has(answerKey) && <ClassResults activityId={activity.id} q={index} question={question} reflection={activity.kind === "reflection"} answer={answer} />}
       {sent.has(answerKey) ? (
         <div className="tutor-sent">
           <strong>✓ Response sent</strong>
@@ -4320,9 +4371,7 @@ export default function TutorActivity({
           </button>
         </div>
       )}
-      {showPeers && (
-        <LivePeers key={index} activityId={activity.id} q={index} />
-      )}
+      <LivePeers key={index} activityId={activity.id} q={index} expanded={showPeers} />
     </div>
   )
 }
@@ -4331,6 +4380,8 @@ export default function TutorActivity({
 ## src/LivePeers.tsx
 
 ```tsx
+import { SharedText } from "./ClassResults"
+import { displayStudent } from "./class-display"
 import { useReducer, useRef, useState } from "react"
 import { useClassroom } from "./ClassRoom"
 import {
@@ -4341,9 +4392,11 @@ import {
 export default function LivePeers({
   activityId,
   q,
+  expanded = false,
 }: {
   activityId: string
   q: number
+  expanded?: boolean
 }) {
   const room = useClassroom()
   const [discussion, dispatch] = useReducer(peerDiscussionReducer, {
@@ -4354,7 +4407,7 @@ export default function LivePeers({
   const pending = useRef(false)
   const retryId = useRef<string | null>(null)
   const rows = room.responses.filter(
-    (row) => row.activity_id === activityId && row.payload.q === q,
+    (row) => row.activity_id === activityId && row.kind === "peer_reply" && (row.payload.q === undefined || row.payload.q === q),
   )
   async function post() {
     const text = discussion[1].draft.trim()
@@ -4384,20 +4437,11 @@ export default function LivePeers({
   }
   return (
     <section className="live-peers" aria-label="Peer discussion">
-      <h4>Learn together</h4>
+      <h4>Replies between students</h4>
       {rows.map((row) => (
         <article key={row.id}>
-          <strong>{row.student || "Anonymous"}</strong>
-          <p>
-            {String(
-              row.payload.text ??
-                (row.kind === "rating"
-                  ? `${row.payload.answer} / 5`
-                  : row.kind === "choice"
-                    ? `Option ${Number(row.payload.answer) + 1}`
-                    : ""),
-            )}
-          </p>
+          <strong>{displayStudent(row.student, room.identity, row.payload.clientId)}</strong>
+          <SharedText text={String(row.payload.text || "")} english={typeof row.payload.text_en === "string" ? row.payload.text_en : undefined} />
           <button
             type="button"
             onClick={() =>
@@ -4422,6 +4466,7 @@ export default function LivePeers({
           </button>
         </small>
       )}
+      <details open={expanded || !!discussion[1].replyTo || undefined}><summary>Write a reply</summary>
       <form
         onSubmit={(e) => {
           e.preventDefault()
@@ -4446,6 +4491,7 @@ export default function LivePeers({
           {busy ? "Sending…" : "Send reply"}
         </button>
       </form>
+      </details>
       {error && <small role="status">{error}</small>}
     </section>
   )
@@ -4519,6 +4565,40 @@ export default function LivePeers({
 .class-join-close { position:absolute; top:16px; right:18px; display:grid; place-items:center; width:30px; height:30px; border-radius:50%; background:#e6ebdf; color:#65785e; font-size:23px; line-height:1; }
 .class-join-close:focus-visible { outline:2px solid #638163; outline-offset:2px; }
 @media (prefers-reduced-transparency:reduce) { .class-join-modal::backdrop { backdrop-filter:none; background:#26302670; } }
+.class-presence { display:inline-flex; gap:5px; align-items:center; }
+.class-presence .live-dot { width:5px; height:5px; background:#74896a; box-shadow:0 0 0 3px #74896a15; }
+.class-results { border-top:1px solid var(--line); padding-top:10px; font-size:12px; }
+.class-results h4 { margin:0 0 10px; font-size:13px; display:flex; justify-content:space-between; gap:12px; }
+.class-results h4 small,.class-result-bar small,.class-own-answer small { color:var(--muted); font-size:10px; font-weight:400; }
+.class-result-bar { margin-bottom:10px; }
+.class-result-bar > div { display:flex; justify-content:space-between; gap:12px; margin-bottom:4px; font-size:12px; }
+.class-result-bar progress { display:block; width:100%; height:7px; accent-color:#6d8665; }
+.class-average { font-size:32px; color:var(--olive); }.class-average small { font-size:14px; font-weight:400; }
+.class-response { padding:9px 0; border-top:1px solid #344b350c; }
+.class-response strong { font-size:11px; }.class-response p { margin-top:4px; font-size:12px; }
+.class-results-more,.class-gallery-switch button { font-size:11px; color:var(--olive); }
+.class-gallery-switch { padding:8px 24px 0; display:flex; justify-content:flex-end; flex:none; }
+.class-extra-form { flex:1; min-height:0; flex-direction:column; }
+.class-extra-form > .extra-activity { margin-bottom:0; }
+.class-artefact-gallery { flex:1; min-height:0; overflow:auto; padding:12px 24px; }
+.class-artefact-gallery h3 { font:500 22px ui-serif,Georgia,serif; margin:0 0 12px; }
+.class-artefact-gallery > div { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.class-artefact-gallery figure { margin:0; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+.class-artefact-gallery img { width:100%; height:140px; object-fit:contain; background:#f0f3eb; }
+.class-artefact-gallery figcaption { padding:8px; font-size:11px; }.class-artefact-gallery small { margin-left:8px; color:var(--muted); }
+.tutor-activity { padding-bottom:18px; }.tutor-activity > * { flex-shrink:0; }
+.tutor-activity-footer { position:static; flex:none; padding-top:8px; flex-wrap:wrap; }
+.tutor-activity-footer small { flex:1 1 160px; }.tutor-activity-footer button { flex:none; }
+.classroom-inline-replies { margin-top:8px; border-top:1px solid var(--line); padding-top:8px; }
+@keyframes classroom-enter { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+@keyframes classroom-pop { 50% { transform:scale(1.2); } }
+.question-card { animation:classroom-enter .22s ease-out; }.reaction-live-count { animation:classroom-pop .25s ease-out; }
+@media(prefers-reduced-motion:reduce) { .question-card,.reaction-live-count { animation:none; } }
+@container(max-width:660px) { .class-extra-form .extra-activity--artefact { padding-top:10px; } .class-extra-form .extra-activity--artefact .extra-activity-title { margin-bottom:8px; } .class-extra-form .extra-activity--artefact .extra-activity-title h3 { margin-top:5px; font-size:20px; } .class-extra-form .artefact-empty { gap:5px; padding:8px; } .class-extra-form .artefact-details { gap:6px; } }
+@media(max-width:1150px) {
+  .slide-surface:has(.tutor-activity),.slide-surface:has(.tutor-activity-shell) { height:100%; aspect-ratio:auto; max-height:100%; }
+  .slide-surface > .embedded-activity:has(.tutor-activity),.slide-surface > .embedded-activity:has(.tutor-activity-shell) { aspect-ratio:auto; }
+}
 ```
 
 ## tests/create-test-class.mjs
@@ -4568,409 +4648,85 @@ if (!upload.error) {
 }
 ```
 
-## tests/classroom.integration.mjs
+## tests/shared-classroom.mjs
 
 ```javascript
-// Run against an isolated test class (never a live teaching session).
-// Requires work/test-class.json and the public Vite Supabase environment variables.
-import assert from "node:assert/strict"
-import { readFileSync, mkdirSync } from "node:fs"
-import { loadEnv } from "vite"
-import { createClient } from "@supabase/supabase-js"
-import { chromium } from "@playwright/test"
-const { code } = JSON.parse(readFileSync("work/test-class.json", "utf8"))
-const env = loadEnv("development", process.cwd(), "VITE_")
-const db = createClient(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_ANON_KEY, {
-  auth: { persistSession: false },
-})
-const browser = await chromium.launch({
-  ...(process.env.STUDIO_BRIDGE_CHROME
-    ? { executablePath: process.env.STUDIO_BRIDGE_CHROME }
-    : {}),
-  headless: true,
-})
-const context = await browser.newContext({
-  viewport: { width: 1440, height: 900 },
-})
-const page = await context.newPage()
-const errors = []
-page.on("pageerror", (error) => errors.push(error.message))
-mkdirSync("work/qa", { recursive: true })
-async function rows(table, filters = {}) {
-  let query = db.from(table).select("*").eq("session", code)
-  for (const [k, v] of Object.entries(filters)) query = query.eq(k, v)
-  const r = await query
-  if (r.error) throw r.error
-  return r.data
-}
-async function waitFor(test, label) {
-  for (let i = 0; i < 80; i++) {
-    const result = await test()
-    if (result) return result
-    await new Promise((r) => setTimeout(r, 150))
-  }
-  throw new Error("Timed out: " + label)
-}
-async function startActivity(kind, spec = {}) {
-  const id = `${code}-test-${kind}`
-  const a = await db
-    .from("activities")
-    .upsert({ id, session: code, kind, slide: 4, spec })
-  if (a.error) throw a.error
-  const s = await db
-    .from("sessions")
-    .update({
-      state: {
-        slide: 4,
-        activityId: id,
-        activityKind: kind,
-        updatedAt: new Date().toISOString(),
-      },
-    })
-    .eq("code", code)
-  if (s.error) throw s.error
-  await page.getByLabel("Live class activity").waitFor()
-  return id
-}
-async function sent(kind, q) {
-  return waitFor(
-    async () =>
-      (await rows("responses", { kind })).find(
-        (r) => q === undefined || r.payload.q === q,
-      ),
-    "response " + kind + " " + q,
-  )
-}
-try {
-  await db
-    .from("sessions")
-    .update({ state: { slide: 3, activityId: null } })
-    .eq("code", code)
-  await page.goto(process.env.STUDENT_TEST_URL || "http://127.0.0.1:8443/")
-  await page.getByRole("button", { name: "Join a class", exact: true }).click()
-  await page.getByRole("heading", { name: "Join your class." }).waitFor()
-  await page.screenshot({ path: "work/qa/join.png" })
-  await page
-    .getByLabel("Your name", { exact: true })
-    .fill("Integration Student")
-  await page.getByLabel("Class code", { exact: true }).fill(code.toLowerCase())
-  await page.getByRole("button", { name: "Join class", exact: true }).click()
-  await page
-    .getByText("Class " + code, { exact: true })
-    .first()
-    .waitFor()
-  await page.locator(".slide-image").waitFor()
-  await waitFor(
-    async () =>
-      (await page.locator(".slide-image").getAttribute("src"))?.endsWith(
-        "page-03.jpg",
-      ),
-    "initial slide",
-  )
-  console.log("PASS join / original slide numbering")
-  await page
-    .locator(".ask-composer textarea")
-    .fill("Integration question: which evidence matters?")
-  await page
-    .locator(".ask-composer")
-    .getByRole("button", { name: "Send question" })
-    .click()
-  const question = await waitFor(
-    async () =>
-      (await rows("questions")).find((r) =>
-        r.text.startsWith("Integration question:"),
-      ),
-    "question insert",
-  )
-  await db
-    .from("questions")
-    .update({ status: "ans", answer: "Look for repeated research patterns." })
-    .eq("id", question.id)
-  await page
-    .getByText("Look for repeated research patterns.", { exact: true })
-    .waitFor()
-  const card = page
-    .locator(".question-card")
-    .filter({ hasText: "Integration question:" })
-  assert.match(await card.getAttribute("class"), /answered/)
-  await card.locator(".question-actions > button").first().click()
-  await waitFor(
-    async () =>
-      (await rows("questions")).find((r) => r.id === question.id)?.upvotes ===
-      2,
-    "upvote",
-  )
-  console.log("PASS questions / tutor answer / green state / upvote")
-  await page.getByRole("button", { name: /Got it,/ }).click()
-  await waitFor(
-    async () => (await rows("reactions")).some((r) => r.kind === "got"),
-    "reaction",
-  )
-  await db
-    .from("sessions")
-    .update({ state: { slide: 4, activityId: null } })
-    .eq("code", code)
-  await waitFor(
-    async () =>
-      (await page.locator(".slide-image").getAttribute("src"))?.endsWith(
-        "page-04.jpg",
-      ),
-    "live slide update",
-  )
-  console.log("PASS reactions / realtime slide update")
-  await startActivity("concept", {
-    questions: [
-      {
-        type: "mc",
-        text: "Which evidence supports this persona?",
-        options: [{ t: "Repeated observations", ok: true }, { t: "A guess" }],
-      },
-      { type: "scale", text: "How ready are you?", lo: "Not yet", hi: "Ready" },
-      {
-        type: "open",
-        text: "Explain your reasoning.",
-        hint: "Use one observation.",
-      },
-      {
-        type: "mc",
-        text: "Which frame leaves room?",
-        options: [{ t: "A human need" }, { t: "A fixed solution" }],
-      },
-      { type: "scale", text: "How confident now?" },
-    ],
-  })
-  await page
-    .getByRole("heading", { name: "Which evidence supports this persona?" })
-    .waitFor()
-  await page
-    .getByRole("button", { name: "A Repeated observations", exact: true })
-    .click()
-  await page
-    .getByRole("button", { name: "Submit response →", exact: true })
-    .click()
-  const choice = await sent("choice", 0)
-  assert.equal(choice.payload.answer, 0)
-  await page
-    .getByRole("button", { name: "View peer responses", exact: true })
-    .click()
-  await page
-    .getByLabel("Reply to classmates")
-    .fill("I noticed this pattern in several interviews.")
-  await page.getByRole("button", { name: "Send reply", exact: true }).click()
-  await sent("peer_reply", 0)
-  await page.getByRole("button", { name: "Question 2", exact: true }).click()
-  await page
-    .locator(".tutor-scale")
-    .getByRole("button", { name: "5", exact: true })
-    .click()
-  await page
-    .getByRole("button", { name: "Submit response →", exact: true })
-    .click()
-  assert.equal((await sent("rating", 1)).payload.answer, 5)
-  await page.getByRole("button", { name: "Question 3", exact: true }).click()
-  await page
-    .getByRole("textbox", { name: "Your response", exact: true })
-    .fill("The same need appeared in three interviews.")
-  await page
-    .getByRole("button", { name: "Submit response →", exact: true })
-    .click()
-  await sent("open", 2)
-  await page.getByRole("button", { name: "Question 4", exact: true }).click()
-  await page
-    .getByRole("button", { name: "A A human need", exact: true })
-    .click()
-  await page
-    .getByRole("button", { name: "Submit response →", exact: true })
-    .click()
-  await sent("choice", 3)
-  await page.getByRole("button", { name: "Question 5", exact: true }).click()
-  await page
-    .locator(".tutor-scale")
-    .getByRole("button", { name: "4", exact: true })
-    .click()
-  await page
-    .getByRole("button", { name: "Submit response →", exact: true })
-    .click()
-  await sent("rating", 4)
-  await page.screenshot({ path: "work/qa/concept.png" })
-  console.log(
-    "PASS all 5 concept questions / q indexes / open answer / peer reply",
-  )
-  await startActivity("discussion")
-  await page.getByRole("button", { name: /Play Agree card/ }).click()
-  await sent("discussion")
-  await page.screenshot({ path: "work/qa/discussion.png" })
-  console.log("PASS discussion card")
-  await startActivity("artefact")
-  await page
-    .getByLabel("Choose artefact photo")
-    .setInputFiles({
-      name: "test-artefact.png",
-      mimeType: "image/png",
-      buffer: Buffer.from(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aORcAAAAASUVORK5CYII=",
-        "base64",
-      ),
-    })
-  await page.getByLabel("Group name").fill("Integration group")
-  await page
-    .getByLabel("The thinking behind it")
-    .fill("Repeated needs informed our persona.")
-  await page.getByRole("button", { name: /Submit artefact/ }).click()
-  const photo = await sent("artefact")
-  assert.equal(photo.team, "Integration group")
-  assert.match(photo.payload.url, /\/storage\/v1\/object\/public\/artefacts\//)
-  assert.equal((await fetch(photo.payload.url)).status, 200)
-  console.log("PASS photo upload / public storage URL / team / caption")
-  await startActivity("reflection", {
-    question: "What changed in your understanding?",
-    hint: "Connect it to your research.",
-  })
-  await page
-    .getByRole("textbox", { name: "Your response", exact: true })
-    .fill("I now separate evidence from assumptions.")
-  await page
-    .getByRole("button", { name: "Submit response →", exact: true })
-    .click()
-  await sent("reflection")
-  await page.reload()
-  await page.getByRole("button", { name: "Join a class", exact: true }).click()
-  await page.getByRole("button", { name: "Join class", exact: true }).click()
-  await page
-    .getByText("Class " + code, { exact: true })
-    .first()
-    .waitFor()
-  await page.getByText("Response sent", { exact: false }).waitFor()
-  console.log("PASS reflection / rejoin restores saved details and response")
-  await db
-    .from("sessions")
-    .update({ state: { slide: 5, activityId: null } })
-    .eq("code", code)
-  await page.locator(".slide-image").waitFor()
-  await waitFor(
-    async () =>
-      (await page.locator(".slide-image").getAttribute("src"))?.endsWith(
-        "page-05.jpg",
-      ),
-    "activity closed",
-  )
-  await page.screenshot({ path: "work/qa/live.png" })
-  await page.getByRole("button", { name: "Hide questions sidebar" }).click()
-  await page.screenshot({ path: "work/qa/live-collapsed.png" })
-  await page.getByRole("button", { name: "Show questions sidebar" }).click()
-  await context.setOffline(true)
-  await page
-    .locator(".ask-composer textarea")
-    .fill("Offline question kept for retry")
-  await page
-    .locator(".ask-composer")
-    .getByRole("button", { name: "Send question" })
-    .click()
-  await page.getByText("Not sent ·", { exact: false }).waitFor()
-  await context.setOffline(false)
-  await page.getByRole("button", { name: "Retry sending", exact: true }).click()
-  await waitFor(
-    async () =>
-      (await rows("questions")).some(
-        (r) => r.text === "Offline question kept for retry",
-      ),
-    "retry question",
-  )
-  console.log(
-    "PASS activity close / sidebar toggle / offline fallback and retry",
-  )
-  await page.getByRole("button", { name: "My Learning", exact: true }).click()
-  await page
-    .getByRole("heading", { name: "My Learning", exact: true })
-    .waitFor()
-  const conceptEntry = page
-    .locator(".learning-entry")
-    .filter({
-      has: page.getByRole("heading", { name: "Concept check", exact: true }),
-    })
-  await conceptEntry.getByRole("button", { name: /View response/ }).click()
-  await page
-    .getByRole("heading", { name: "Which evidence supports this persona?" })
-    .waitFor()
-  await page
-    .getByText("Activity closed · viewing your responses.", { exact: true })
-    .waitFor()
-  await page.getByRole("button", { name: "Question 2", exact: true }).click()
-  await page.getByRole("heading", { name: "How ready are you?" }).waitFor()
-  await page.getByRole("button", { name: "Back to live", exact: true }).click()
-  await page.locator(".slide-image").waitFor()
-  console.log("PASS My Learning / previous activity review / return to live")
-
-  const events = await rows("events")
-  for (const type of [
-    "question_asked",
-    "question_upvoted",
-    "reaction_sent",
-    "response_submitted",
-    "artefact_uploaded",
-  ])
-    assert.ok(
-      events.some((r) => r.type === type),
-      "Missing log " + type,
-    )
-  assert.equal(errors.length, 0, errors.join("\n"))
-  await page.getByRole("button", { name: "Leave class", exact: true }).click()
-  await page.getByRole("button", { name: "Join a class", exact: true }).waitFor()
-  await page.reload()
-  await page.getByRole("button", { name: "Join a class", exact: true }).waitFor()
-  await page.locator(".slide-image").waitFor()
-  console.log(
-    "PASS event logs / leave class / original demo / no browser errors",
-  )
-} finally {
-  await browser.close()
-}
-```
-
-## tests/demo-entry.mjs
-
-```javascript
-import assert from "node:assert/strict"
-import { readFileSync } from "node:fs"
-import { chromium } from "@playwright/test"
-const { code } = JSON.parse(readFileSync("work/test-class.json", "utf8"))
-const browser = await chromium.launch({ ...(process.env.STUDIO_BRIDGE_CHROME ? { executablePath: process.env.STUDIO_BRIDGE_CHROME } : {}), headless: true })
-try {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
-  const errors = []
-  page.on("pageerror", e => errors.push(e.message))
-  await page.goto(process.env.STUDENT_TEST_URL || "http://127.0.0.1:8443/")
-  await page.locator(".slide-image").waitFor()
-  assert.equal(await page.getByRole("dialog").count(), 0)
-  await page.getByRole("button", { name: "Join a class", exact: true }).click()
-  await page.getByRole("dialog").waitFor()
-  await page.getByLabel("Your name", { exact: true }).fill("Modal verification")
-  await page.keyboard.press("Escape")
-  await page.getByRole("dialog").waitFor({ state: "hidden" })
-  await page.getByRole("button", { name: "Join a class", exact: true }).click()
-  assert.equal(await page.getByLabel("Your name", { exact: true }).inputValue(), "Modal verification")
-  await page.getByRole("button", { name: "Continue in demo", exact: true }).click()
-  await page.getByRole("dialog").waitFor({ state: "hidden" })
-  await page.getByRole("button", { name: "Join a class", exact: true }).click()
-  await page.getByLabel("Class code", { exact: true }).fill(code)
-  await page.screenshot({ path: "work/qa/join-modal.png" })
-  await page.getByRole("button", { name: "Join class", exact: true }).click()
-  await page.getByText("Class " + code, { exact: true }).first().waitFor()
-  await page.getByRole("dialog").waitFor({ state: "hidden" })
-  const clientId = await page.evaluate(() => JSON.parse(localStorage.getItem("studio-bridge-class")).clientId)
-  await page.reload()
-  await page.getByRole("button", { name: "Join a class", exact: true }).waitFor()
-  assert.equal(await page.getByRole("dialog").count(), 0)
-  await page.getByRole("button", { name: "Join a class", exact: true }).click()
-  assert.equal(await page.getByLabel("Your name", { exact: true }).inputValue(), "Modal verification")
-  assert.equal(await page.getByLabel("Class code", { exact: true }).inputValue(), code)
-  await page.getByRole("button", { name: "Join class", exact: true }).click()
-  await page.getByText("Class " + code, { exact: true }).first().waitFor()
-  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("studio-bridge-class")).clientId), clientId)
-  await page.getByRole("button", { name: "Leave class", exact: true }).click()
-  await page.getByRole("button", { name: "Join a class", exact: true }).waitFor()
-  assert.equal(await page.getByRole("dialog").count(), 0)
-  assert.equal(errors.length, 0, errors.join("\n"))
-  console.log("PASS Demo default / modal close and Escape / class join / refresh stays Demo / saved details and identity / Leave class / no browser errors")
-} finally { await browser.close() }
+import assert from 'node:assert/strict'
+import {readFileSync,mkdirSync} from 'node:fs'
+import {createClient} from '@supabase/supabase-js'
+import {loadEnv} from 'vite'
+import {chromium} from '@playwright/test'
+const {code}=JSON.parse(readFileSync('work/test-class.json'))
+const env=loadEnv('development',process.cwd(),'VITE_');const db=createClient(env.VITE_SUPABASE_URL,env.VITE_SUPABASE_ANON_KEY,{auth:{persistSession:false}})
+// Fixtures are restricted to a separately created test class. The Student UI never seeds rows.
+assert.notEqual(code,'DEMO')
+async function insert(table,value){const r=await db.from(table).insert(value).select();if(r.error)throw r.error;return r.data}
+async function wait(test,label){for(let i=0;i<80;i++){const value=await test();if(value)return value;await new Promise(r=>setTimeout(r,200))}throw Error('Timed out: '+label)}
+async function response(kind,payload,activity_id,student='Maya Chen'){return insert('responses',{session:code,activity_id,student,kind,payload:{...payload,sim:true}})}
+async function rows(){const r=await db.from('responses').select('*').eq('session',code);if(r.error)throw r.error;return r.data}
+const [question]=await insert('questions',{session:code,student:'Maya Chen',text:'我们应该先做亲和图吗？',text_en:'Should we start with an affinity map?',lang:'zh',slide:3})
+await insert('reactions',[{session:code,kind:'got',student:'Maya Chen'},{session:code,kind:'got',student:'Alex Morgan'}])
+const concept=code+'-shared-concept'
+const spec={questions:[{type:'mc',text:'Which evidence is useful?',options:[{t:'Research patterns'},{t:'Assumptions'},{t:'An ideal customer'},{t:'A fictional character'}]},{type:'scale',text:'How confident are you?'},{type:'open',text:'What did you notice?'}]}
+await insert('activities',{id:concept,session:code,kind:'concept',slide:3,spec})
+for(const a of [0,0,1])await response('choice',{q:0,answer:a},concept)
+for(const a of [2,4])await response('rating',{q:1,answer:a},concept)
+await response('open',{q:2,text:'我们用访谈证据。',text_en:'We used interview evidence.',lang:'zh'},concept)
+await response('peer_reply',{text:'Can you add a quote?'},concept,'Alex Morgan')
+const browser=await chromium.launch({...(process.env.STUDIO_BRIDGE_CHROME?{executablePath:process.env.STUDIO_BRIDGE_CHROME}:{}),headless:true})
+mkdirSync('work/qa',{recursive:true})
+try{
+ const page=await browser.newPage({viewport:{width:1440,height:900}});const errors=[];page.on('pageerror',e=>errors.push(e.message))
+ await page.goto(process.env.STUDENT_TEST_URL||'http://127.0.0.1:8443/')
+ await page.getByText('Live class',{exact:true}).first().waitFor();assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('studio-bridge-class')).code),code,'Run dev server with the isolated test class code');assert.equal(await page.getByRole('dialog').count(),0)
+ await page.getByText('Should we start with an affinity map?',{exact:true}).waitFor()
+ await page.getByText('Maya C.',{exact:true}).first().waitFor();assert.equal(await page.getByText('Maya Chen',{exact:true}).count(),0)
+ const questionCard=page.locator('.question-card').filter({hasText:'Should we start with an affinity map?'})
+ await questionCard.getByRole('button',{name:'Reply',exact:true}).click();await questionCard.locator('textarea').fill('Yes, start with the evidence.')
+ await questionCard.getByRole('button',{name:'Send reply',exact:true}).click()
+ await wait(async()=>(await rows()).some(r=>r.kind==='qa_reply'&&r.payload.questionId===question.id),'Q&A reply without activity')
+ const rx=await db.from('questions').select('upvotes').eq('id',question.id).single();const before=rx.data.upvotes
+ await Promise.all([db.rpc('upvote_question',{qid:question.id}),db.rpc('upvote_question',{qid:question.id})])
+ await wait(async()=>{const r=await db.from('questions').select('upvotes').eq('id',question.id).single();return r.data.upvotes===before+2},'atomic votes')
+ await questionCard.locator('.question-actions > button').first().click()
+ await wait(async()=>{const r=await db.from('questions').select('upvotes').eq('id',question.id).single();return r.data.upvotes===before+3},'UI RPC vote')
+ await response('qa_reply',{questionId:question.id,text:'We started with observations.'},'none','Alex Morgan')
+ await page.getByText('We started with observations.',{exact:true}).waitFor()
+ await insert('questions',{session:code,student:'Yuki Tanaka',text:'A new live question',slide:3})
+ await page.getByText('A new live question',{exact:true}).waitFor();await page.getByText('Yuki T.',{exact:true}).waitFor()
+ await page.getByRole('button',{name:/Got it, 2 reactions/}).waitFor();await insert('reactions',{session:code,kind:'got',student:'Yuki Tanaka'})
+ await page.getByRole('button',{name:/Got it, 3 reactions/}).waitFor()
+ console.log('PASS automatic join / abbreviated names / translation / Q&A without active activity / atomic votes / incoming questions and reactions')
+ async function activate(id,kind,spec={}){if(id!==concept)await insert('activities',{id,session:code,kind,slide:3,spec});const r=await db.from('sessions').update({state:{slide:3,activityId:id,activityKind:kind}}).eq('code',code);if(r.error)throw r.error;await page.getByLabel('Live class activity').waitFor()}
+ await activate(concept,'concept')
+ for(const [width,height]of [[1440,900],[1024,768]]) { await page.setViewportSize({width,height}); const submit=page.getByRole('button',{name:'Submit response →',exact:true});await submit.waitFor();const b=await submit.boundingBox();const card=await page.locator('.slide-surface').boundingBox();assert.ok(b.y+b.height<=card.y+card.height,'Concept submit outside card');await page.screenshot({path:`work/qa/shared-concept-${width}.png`}) }
+ await page.setViewportSize({width:1440,height:900})
+ await page.getByRole('button',{name:'A Research patterns',exact:true}).click();await page.getByRole('button',{name:'Submit response →',exact:true}).click()
+ await page.getByLabel('Class results').getByText('75%',{exact:true}).waitFor()
+ await response('choice',{q:0,answer:1},concept,'Yuki Tanaka')
+ await page.getByLabel('Class results').getByText('60%',{exact:true}).waitFor()
+ await page.getByText('Can you add a quote?',{exact:true}).waitFor()
+ await page.getByRole('button',{name:'Question 2',exact:true}).click();await page.locator('.tutor-scale').getByRole('button',{name:'5',exact:true}).click();await page.getByRole('button',{name:'Submit response →',exact:true}).click()
+ await page.getByLabel('Class average').getByText('3.7',{exact:false}).waitFor()
+ await page.getByRole('button',{name:'Question 3',exact:true}).click();await page.getByRole('textbox',{name:'Your response',exact:true}).fill('We found a repeating need.');await page.getByRole('button',{name:'Submit response →',exact:true}).click()
+ await page.getByText('We used interview evidence.',{exact:true}).waitFor();await page.getByLabel('Classmates’ answers').getByRole('button',{name:'View original',exact:true}).click();await page.getByText('我们用访谈证据。',{exact:true}).waitFor()
+ console.log('PASS live MC bars / scale average / other open answers / original text / activity replies without q')
+ const reflect=code+'-shared-reflection';await activate(reflect,'reflection',{question:'What changed?',hint:'Use evidence.'});await response('reflection',{text:'I now check patterns.'},reflect)
+ await page.getByRole('textbox',{name:'Your response',exact:true}).fill('I understand it differently.');await page.getByRole('button',{name:'Submit response →',exact:true}).click();await page.getByText('I now check patterns.',{exact:true}).waitFor()
+ const discuss=code+'-shared-discussion';await activate(discuss,'discussion');await response('discussion',{card:0},discuss);await page.getByRole('button',{name:/Play Agree card.*0 played/}).waitFor();await page.getByRole('button',{name:/Play Agree card/}).click();await page.getByRole('button',{name:/Play Agree card.*1 played/}).waitFor()
+ console.log('PASS classmates reflections / discussion only counts own cards')
+ const art=code+'-shared-artefact';await activate(art,'artefact')
+ const url=db.storage.from('artefacts').getPublicUrl(code+'/integration-test.png').data.publicUrl
+ await response('artefact',{url,name:'Persona',caption:'Our evidence map'},art)
+ for(const [width,height]of [[1440,900],[1024,768]]){
+  await page.setViewportSize({width,height});await page.getByRole('button',{name:/Submit artefact/}).waitFor()
+  const button=await page.getByRole('button',{name:/Submit artefact/}).boundingBox();const slide=await page.locator('.slide-surface').boundingBox();assert.ok(button.y+button.height<=slide.y+slide.height,JSON.stringify({button,slide}))
+  const field=await page.getByLabel('The thinking behind it').boundingBox();assert.ok(field.y+field.height<=button.y+1,'Thinking field overlaps submit')
+  await page.screenshot({path:`work/qa/shared-artefact-${width}.png`})
+ }
+ await page.getByRole('button',{name:/Class artefacts/}).click();await page.getByText('Our evidence map',{exact:true}).waitFor();await response('artefact',{url,name:'Sketch',caption:'New sketch arrived'},art,'Yuki Tanaka');await page.getByText('New sketch arrived',{exact:true}).waitFor()
+ await page.screenshot({path:'work/qa/shared-gallery.png'})
+ await page.getByRole('button',{name:'Leave class',exact:true}).click();await page.getByRole('button',{name:'Join a class',exact:true}).waitFor();await page.locator('.slide-image').waitFor()
+ assert.equal(errors.length,0,errors.join('\n'));console.log('PASS artefact gallery live updates / normal-flow submit 1024 & 1440 / offline sample mode / no browser errors')
+}finally{await browser.close()}
 ```

@@ -1,3 +1,5 @@
+import { displayStudent } from "./class-display"
+import { SharedText } from "./ClassResults"
 import { ClassBadge, useClassroom } from "./ClassRoom"
 import TutorActivity from "./TutorActivity"
 import type { QuestionRow } from "./class-types"
@@ -225,8 +227,8 @@ type ClassroomQuestion = {
   translation?: string
   sourceLanguage?: string
 }
-function classroomQuestion(row: QuestionRow): ClassroomQuestion {
-  const name = row.anonymous ? "Anonymous" : row.student || "Student"
+function classroomQuestion(row: QuestionRow, currentIdentity?: import("./class-types").ClassIdentity | null): ClassroomQuestion {
+  const name = row.anonymous ? "Anonymous" : displayStudent(row.student, currentIdentity || null)
   return { id: row.id, dbId: row.id, slide: row.slide || 1, name,
     initials: name.split(" ").map(part => part[0]).join("").slice(0,2), time: "a moment",
     text: row.text, translation: row.text_en || undefined, sourceLanguage: row.lang?.startsWith("zh") ? "Chinese" : row.lang || undefined,
@@ -963,7 +965,7 @@ function LiveView({
   const [originalQuestions, setOriginalQuestions] = useState<(number | string)[]>([])
   const [replyQuestion, setReplyQuestion] = useState<number | string | null>(null)
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({})
-  const [questionReplies, setQuestionReplies] = useState<Record<string, { id: string; text: string; name: string }[]>>({})
+  const [questionReplies, setQuestionReplies] = useState<Record<string, { id: string; text: string; name: string; english?: string }[]>>({})
   const [identity, setIdentity] = useState<"anonymous" | "named">(room.identity?.anonymous === false ? "named" : "anonymous")
   const [questionLanguage, setQuestionLanguage] = useState<"zh" | "en">("en")
   const [identityMenuOpen, setIdentityMenuOpen] = useState(false)
@@ -1023,14 +1025,23 @@ function LiveView({
   useEffect(() => {
     if (liveMode) setQuestionList(current => [
       ...current.filter(question => question.sendError && !room.questions.some(row => row.id === question.id)),
-      ...room.questions.map(classroomQuestion),
+      ...room.questions.map(row => classroomQuestion(row, room.identity)),
     ])
   }, [liveMode, room.questions])
+  const previousReactionCounts = useRef<Record<string, number> | null>(null)
+  const [reactionPops, setReactionPops] = useState<Record<string, number>>({})
   useEffect(() => {
     if (!liveMode) return
     const map = { got: "understood", think: "thinking", confused: "confused", insight: "insightful", applause: "applause" } as const
     const counts = { understood: 0, thinking: 0, confused: 0, insightful: 0, applause: 0 }
     for (const reaction of room.reactions) if (map[reaction.kind]) counts[map[reaction.kind]]++
+    const previous = previousReactionCounts.current
+    if (previous) setReactionPops(current => {
+      const next = { ...current }
+      for (const key of Object.keys(counts) as LessonReaction[]) if (counts[key] > previous[key]) next[key] = (next[key] || 0) + 1
+      return next
+    })
+    previousReactionCounts.current = counts
     setFeedbackCounts(counts)
   }, [liveMode, room.reactions])
 
@@ -1053,7 +1064,7 @@ function LiveView({
     }, 1900)
     burstTimers.current.add(timer)
     if (feedback === next) return
-    setFeedbackCounts((current) => {
+    if (!liveMode) setFeedbackCounts((current) => {
       const updated = { ...current, [next]: current[next] + 1 }
       if (feedback) updated[feedback] = Math.max(0, current[feedback] - 1)
       return updated
@@ -1081,28 +1092,28 @@ function LiveView({
     questionSending.current = true
     try {
       const result = await room.api.askQuestion({ id: String(id), text, anonymous, slide: viewedSlide, lang: /[\u3400-\u9fff]/.test(text) ? "zh" : questionLanguage })
-      if (result.data) { setQuestionList(current => [classroomQuestion(result.data!), ...current.filter(q => q.id !== id)]); notify("Your question was sent to your tutor.") }
+      if (result.data) { setQuestionList(current => [classroomQuestion(result.data!, room.identity), ...current.filter(q => q.id !== id)]); notify("Your question was sent to your tutor.") }
       else notify("Question kept on this device. Retry to send.")
     } finally { questionSending.current = false }
   }
   async function retryQuestion(question: ClassroomQuestion) {
     const result = await room.api.askQuestion({ id: String(question.id), text: question.text, anonymous: question.name === "Anonymous", slide: question.slide, lang: /[\u3400-\u9fff]/.test(question.text) ? "zh" : "en" })
-    if (result.data) setQuestionList(current => current.map(q => q.id === question.id ? classroomQuestion(result.data!) : q))
+    if (result.data) setQuestionList(current => current.map(q => q.id === question.id ? classroomQuestion(result.data!, room.identity) : q))
   }
   async function voteQuestion(question: ClassroomQuestion) {
     if (!room.identity) { setQuestionList(current => current.map(q => q.id === question.id ? { ...q, votes: q.votes + 1 } : q)); return }
     if (!question.dbId) return
     const result = await room.api.upvoteQuestion(question.dbId)
-    if (result.data) setQuestionList(current => current.map(q => q.id === question.id ? classroomQuestion(result.data!) : q))
+    if (result.data) setQuestionList(current => current.map(q => q.id === question.id ? classroomQuestion(result.data!, room.identity) : q))
   }
 
   useEffect(() => {
     if (!liveMode) return
-    const grouped: Record<string, { id: string; text: string; name: string }[]> = {}
+    const grouped: Record<string, { id: string; text: string; name: string; english?: string }[]> = {}
     for (const row of room.responses) {
-      if (row.kind !== "peer_reply" || typeof row.payload.parentId !== "string") continue
-      const parent = row.payload.parentId
-      ;(grouped[parent] ||= []).push({ id: row.id, text: String(row.payload.text || ""), name: row.student || "Anonymous" })
+      if (row.kind !== "qa_reply" || typeof row.payload.questionId !== "string") continue
+      const parent = row.payload.questionId
+      ;(grouped[parent] ||= []).push({ id: row.id, text: String(row.payload.text || ""), english: typeof row.payload.text_en === "string" ? row.payload.text_en : undefined, name: displayStudent(row.student, room.identity, row.payload.clientId) })
     }
     setQuestionReplies(current => {
       const next = { ...current }
@@ -1118,9 +1129,10 @@ function LiveView({
       ...current,
       [question.id]: [...(current[question.id] || []), { id, text, name: identity === "anonymous" ? "You · Anonymous" : `You · ${studentName}` }],
     }))
-    if (room.identity) {
-      if (room.state.activityId) void room.api.submitResponse({ id, activityId: room.state.activityId, kind: "peer_reply", payload: { parentId: question.dbId || question.id, text } })
-      else notify("Reply kept on this device. Your tutor hasn’t opened a reply activity.")
+    if (room.identity && question.dbId) {
+      void room.api.replyToQuestion({ id, questionId: question.dbId, text }).then(result => {
+        if (result.error) { setReplyDrafts(current => ({ ...current, [question.id]: text })); notify("Reply kept on this device. Please retry when connected.") }
+      })
     }
     setReplyDrafts(current => ({ ...current, [question.id]: "" }))
     onLearningEntry({ id: `live-response-${id}`, kind: "Response", title: text, detail: `Your reply to ${question.name} · ${question.translation || question.text}`, slide: question.slide, week: 6 })
@@ -1308,7 +1320,7 @@ function LiveView({
                     <span aria-hidden="true" className="feedback-emoji">
                       {reaction.emoji}
                     </span>
-                    <small aria-hidden="true">
+                    <small aria-hidden="true" className="reaction-live-count" key={reactionPops[reaction.id] || 0}>
                       {feedbackCounts[reaction.id]}
                     </small>
                     {reactionBursts.filter(burst => burst.reaction === reaction.id).map(burst =>
@@ -1414,13 +1426,14 @@ function LiveView({
                   </div>
                   </div>
 
+                  {replyQuestion !== question.id && questionReplies[question.id]?.length > 0 && <div className="question-replies classroom-inline-replies">{questionReplies[question.id].map(reply => <div className="question-reply-message" key={reply.id}><small>{reply.name}</small><SharedText text={reply.text} english={reply.english} /></div>)}</div>}
                   {replyQuestion === question.id && (
                     <div className="question-reply-panel" id={`question-reply-${question.id}`}>
                       <div className="question-replies" aria-live="polite">
                         {(questionReplies[question.id] || []).map(reply => (
                           <div className="question-reply-message" key={reply.id}>
                             <small>{reply.name}</small>
-                            <p>{reply.text}</p>
+                            <SharedText text={reply.text} english={reply.english} />
                           </div>
                         ))}
                       </div>
@@ -1616,7 +1629,7 @@ export default function App() {
   let ownedQuestionIds: string[] = []
   try { ownedQuestionIds = JSON.parse(localStorage.getItem(`studio-bridge-questions:${room.identity?.clientId}`) || "[]") } catch { /* Optional history. */ }
   const restoredQuestions: LearningEntry[] = room.questions.filter(question => ownedQuestionIds.includes(question.id)).map(question => ({ id: `live-question-${question.id}`, kind: "Question", title: question.text_en || question.text, detail: question.status === "ans" ? "Your question · Answered in class" : "Your question · Shared in class", slide: question.slide || 1, week: room.session?.week || 6 }))
-  const personalEntries: LearningEntry[] = room.identity ? room.responses.filter(row => row.payload.clientId === room.identity?.clientId && row.kind === "peer_reply").map(row => ({ id: `live-response-${row.id}`, kind: "Response", title: String(row.payload.text || ""), detail: "Your reply · Shared in class", slide: room.activities.find(a => a.id === row.activity_id)?.slide || 1, week: room.session?.week || 6 })) : []
+  const personalEntries: LearningEntry[] = room.identity ? room.responses.filter(row => row.payload.clientId === room.identity?.clientId && ["peer_reply", "qa_reply"].includes(row.kind)).map(row => ({ id: `live-response-${row.id}`, kind: "Response", title: String(row.payload.text || ""), detail: "Your reply · Shared in class", slide: room.activities.find(a => a.id === row.activity_id)?.slide || 1, week: room.session?.week || 6 })) : []
   const [activities, dispatchActivity] = useReducer(activityReducer, initialActivities)
   const [section, setSection] = useState<Section>("live")
   const [questionsOpen, setQuestionsOpen] = useState(true)

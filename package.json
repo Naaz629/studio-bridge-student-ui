@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "format": "oxfmt",
     "test:classroom:setup": "node tests/create-test-class.mjs",
-    "test:classroom": "node tests/classroom.integration.mjs"
+    "test:classroom": "node tests/shared-classroom.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.118.0",

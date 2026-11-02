@@ -107,24 +107,22 @@ export function createClassApi(
         "question_upvoted",
         { question: id },
         async () => {
-          const old = await supabase!
-            .from("questions")
-            .select("upvotes")
-            .eq("session", identity!.code)
-            .eq("id", id)
-            .single()
-          if (old.error) throw old.error
-          const next = await supabase!
-            .from("questions")
-            .update({ upvotes: old.data.upvotes + 1 })
-            .eq("session", identity!.code)
-            .eq("id", id)
-            .select()
-            .single()
+          const existing = await supabase!.from("questions").select("id").eq("session", identity!.code).eq("id", id).single()
+          if (existing.error) throw existing.error
+          const vote = await supabase!.rpc("upvote_question", { qid: id })
+          if (vote.error) throw vote.error
+          const next = await supabase!.from("questions").select().eq("session", identity!.code).eq("id", id).single()
           if (next.error) throw next.error
           return next.data as QuestionRow
         },
       )
+    },
+    replyToQuestion(input: { id: string; questionId: string; text: string }) {
+      return logged<ResponseRow>("response_submitted", { response: input.id, kind: "qa_reply", questionId: input.questionId }, async () => {
+        const parent = await supabase!.from("questions").select("id").eq("session", identity!.code).eq("id", input.questionId).single()
+        if (parent.error) throw parent.error
+        return insertOnce("responses", { id: input.id, session: identity!.code, activity_id: activityId || "none", kind: "qa_reply", student: actor, payload: { questionId: input.questionId, text: input.text, lang: /[\u3400-\u9fff]/.test(input.text) ? "zh" : "en", clientId: identity!.clientId } })
+      })
     },
     sendReaction(kind: ReactionKind) {
       return logged("reaction_sent", { kind }, async () => {

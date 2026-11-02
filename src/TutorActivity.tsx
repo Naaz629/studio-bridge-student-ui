@@ -1,3 +1,4 @@
+import ClassResults, { ArtefactGallery } from "./ClassResults"
 import { useEffect, useReducer, useRef, useState } from "react"
 import { useClassroom } from "./ClassRoom"
 import {
@@ -57,6 +58,7 @@ export default function TutorActivity({
   const key = `studio-bridge-activity:${identity.code}:${identity.clientId}:${activity.id}`
   const [q, setQ] = useState(0)
   const [showPeers, setShowPeers] = useState(false)
+  const [showGallery, setShowGallery] = useState(false)
   const [answers, setAnswers] = useState<Record<string, number | string>>(
     () => {
       try {
@@ -97,7 +99,7 @@ export default function TutorActivity({
   )
   const sent = new Set([
     ...localSent,
-    ...own.map((r) =>
+    ...own.filter(r => ["choice", "rating", "open", "reflection", "discussion", "artefact"].includes(r.kind)).map((r) =>
       r.kind === "reflection" ? "reflection" : String(r.payload.q ?? r.kind),
     ),
   ])
@@ -122,7 +124,7 @@ export default function TutorActivity({
   const previous = own.find((r) =>
     activity.kind === "reflection"
       ? r.kind === "reflection"
-      : r.payload.q === index,
+      : ["choice", "rating", "open"].includes(r.kind) && r.payload.q === index,
   )
   const answer =
     answers[answerKey] ??
@@ -333,7 +335,7 @@ export default function TutorActivity({
   if (activity.kind === "discussion" || activity.kind === "artefact") {
     const saved = own.find((r) => r.kind === "artefact")
     const cardCounts = [0, 0, 0, 0, 0]
-    for (const response of room.responses)
+    for (const response of own)
       if (
         response.activity_id === activity.id &&
         response.kind === "discussion" &&
@@ -367,12 +369,11 @@ export default function TutorActivity({
           minHeight: 0,
         }}
       >
-        <ExtraActivity
-          activity={displayRun}
-          dispatch={(action) => void dispatchExtra(action)}
-          active={true}
-          pending={busy || !isLive}
-        />
+        {activity.kind === "artefact" && <div className="class-gallery-switch"><button type="button" onClick={() => setShowGallery(!showGallery)}>{showGallery ? "← Your artefact" : `Class artefacts · ${room.responses.filter(row => row.activity_id === activity.id && row.kind === "artefact" && row.payload.clientId !== identity.clientId).length}`}</button></div>}
+        <div className="class-extra-form" style={{ display: showGallery ? "none" : "flex" }}>
+          <ExtraActivity activity={displayRun} dispatch={action => void dispatchExtra(action)} active={!showGallery} pending={busy || !isLive} />
+        </div>
+        {showGallery && <ArtefactGallery activityId={activity.id} />}
         <div style={{ padding: "0 28px 12px" }}>{statusFooter(extraKind)}</div>
       </div>
     )
@@ -414,7 +415,7 @@ export default function TutorActivity({
           </p>
         )
       )}
-      {question.type === "mc" ? (
+      {!sent.has(answerKey) && (question.type === "mc" ? (
         <div
           className="tutor-choices"
           role="group"
@@ -477,7 +478,8 @@ export default function TutorActivity({
           }}
           placeholder={question.hint || "Share your thoughts…"}
         />
-      )}
+      ))}
+      {sent.has(answerKey) && <ClassResults activityId={activity.id} q={index} question={question} reflection={activity.kind === "reflection"} answer={answer} />}
       {sent.has(answerKey) ? (
         <div className="tutor-sent">
           <strong>✓ Response sent</strong>
@@ -503,9 +505,7 @@ export default function TutorActivity({
           </button>
         </div>
       )}
-      {showPeers && (
-        <LivePeers key={index} activityId={activity.id} q={index} />
-      )}
+      <LivePeers key={index} activityId={activity.id} q={index} expanded={showPeers} />
     </div>
   )
 }

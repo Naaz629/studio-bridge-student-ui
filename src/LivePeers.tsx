@@ -1,3 +1,5 @@
+import { SharedText } from "./ClassResults"
+import { displayStudent } from "./class-display"
 import { useReducer, useRef, useState } from "react"
 import { useClassroom } from "./ClassRoom"
 import {
@@ -8,9 +10,11 @@ import {
 export default function LivePeers({
   activityId,
   q,
+  expanded = false,
 }: {
   activityId: string
   q: number
+  expanded?: boolean
 }) {
   const room = useClassroom()
   const [discussion, dispatch] = useReducer(peerDiscussionReducer, {
@@ -21,7 +25,7 @@ export default function LivePeers({
   const pending = useRef(false)
   const retryId = useRef<string | null>(null)
   const rows = room.responses.filter(
-    (row) => row.activity_id === activityId && row.payload.q === q,
+    (row) => row.activity_id === activityId && row.kind === "peer_reply" && (row.payload.q === undefined || row.payload.q === q),
   )
   async function post() {
     const text = discussion[1].draft.trim()
@@ -51,20 +55,11 @@ export default function LivePeers({
   }
   return (
     <section className="live-peers" aria-label="Peer discussion">
-      <h4>Learn together</h4>
+      <h4>Replies between students</h4>
       {rows.map((row) => (
         <article key={row.id}>
-          <strong>{row.student || "Anonymous"}</strong>
-          <p>
-            {String(
-              row.payload.text ??
-                (row.kind === "rating"
-                  ? `${row.payload.answer} / 5`
-                  : row.kind === "choice"
-                    ? `Option ${Number(row.payload.answer) + 1}`
-                    : ""),
-            )}
-          </p>
+          <strong>{displayStudent(row.student, room.identity, row.payload.clientId)}</strong>
+          <SharedText text={String(row.payload.text || "")} english={typeof row.payload.text_en === "string" ? row.payload.text_en : undefined} />
           <button
             type="button"
             onClick={() =>
@@ -89,6 +84,7 @@ export default function LivePeers({
           </button>
         </small>
       )}
+      <details open={expanded || !!discussion[1].replyTo || undefined}><summary>Write a reply</summary>
       <form
         onSubmit={(e) => {
           e.preventDefault()
@@ -113,6 +109,7 @@ export default function LivePeers({
           {busy ? "Sending…" : "Send reply"}
         </button>
       </form>
+      </details>
       {error && <small role="status">{error}</small>}
     </section>
   )
