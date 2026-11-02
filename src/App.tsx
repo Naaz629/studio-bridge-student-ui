@@ -964,7 +964,7 @@ function LiveView({
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({})
   const [questionReplies, setQuestionReplies] = useState<Record<string, { id: string; text: string; name: string; english?: string }[]>>({})
   const [identity, setIdentity] = useState<"anonymous" | "named">(room.identity?.anonymous === false ? "named" : "anonymous")
-  const [questionLanguage, setQuestionLanguage] = useState<"zh" | "en">("en")
+  const [questionLanguage, setQuestionLanguage] = useState<"zh" | "en">("zh")
   const [identityMenuOpen, setIdentityMenuOpen] = useState(false)
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false)
   useEffect(() => {
