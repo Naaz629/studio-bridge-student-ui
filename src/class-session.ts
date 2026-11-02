@@ -91,6 +91,15 @@ export function useClassSession(identity: ClassIdentity | null) {
         if (active && version === request) setConnected(false)
       }
     }
+    // A busy class sends many changes per second: merge them into one refresh every 400 ms.
+    let refreshTimer = 0
+    function queueRefresh() {
+      if (refreshTimer) return
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = 0
+        void refresh()
+      }, 400)
+    }
     // Subscribe before the snapshot, then refresh on SUBSCRIBED and reconnect:
     // a tutor update cannot fall into the initial fetch/subscription gap.
     const channel = client
@@ -112,8 +121,9 @@ export function useClassSession(identity: ClassIdentity | null) {
         "postgres_changes",
         { event: "*", schema: "public", table, filter: `session=eq.${code}` },
         () => {
-          void refresh()
+          queueRefresh()
         },
+
       )
     }
     channel.subscribe((status) => {
@@ -129,6 +139,7 @@ export function useClassSession(identity: ClassIdentity | null) {
     window.addEventListener("offline", offline)
     return () => {
       active = false
+      window.clearTimeout(refreshTimer)
       request++
       window.clearInterval(interval)
       window.removeEventListener("online", refresh)

@@ -76,6 +76,7 @@ const lessonReactions: {
 type IconName = "progress" | "slide" | "broadcast" | "sparkles" | "bookmark" | "search" | "plus" | "chevron" | "person" | "globe" | "arrow" | "heart" | "bubble" | "share" | "ellipsis" | "tray" | "folder" | "grid" | "list" | "check" | "mic" | "sidebar" | "x" | "help" | "expand"
 
 
+import BulbIcon from "./BulbIcon"
 function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, ReactNode> = {
     progress: <><path d="M4 19h16M7 15v-4M12 15V5M17 15V8" /></>,
@@ -1334,7 +1335,7 @@ function LiveView({
       {questionsOpen && (
         <aside id="live-questions" className="questions-pane" aria-label="Questions sidebar">
           <header className="questions-header">
-            <Icon name="bubble" size={17} />
+            <BulbIcon size={22} />
             <h2>Questions</h2>
             <span className="count-badge">{questionList.length + (liveMode ? 0 : 21)}</span>
           </header>
@@ -1646,7 +1647,7 @@ export default function App() {
               title={questionsOpen ? "Hide questions" : "Show questions"}
               onClick={() => setQuestionsOpen(current => !current)}
             >
-              <Icon name="sidebar" size={19} />
+              <BulbIcon size={24} />
             </button>
           )}
           <div className="live-view-container" hidden={section !== "live"}>

@@ -13,6 +13,17 @@ import type { ClassIdentity } from "./class-types"
 import { supabase } from "./supabase"
 import "./classroom.css"
 
+/* This is a demo: everyone joins one shared class, so there is no code to type. Add ?code=ABCD to the address to try another class. */
+const DEFAULT_CLASS_CODE = (import.meta.env.VITE_DEFAULT_CLASS_CODE || "DEMO").toUpperCase()
+function defaultCode() {
+  try {
+    const fromUrl = new URLSearchParams(window.location.search).get("code")
+    if (fromUrl && /^[A-Z0-9]{4}$/i.test(fromUrl)) return fromUrl.toUpperCase()
+  } catch {
+    /* Use the demo class. */
+  }
+  return DEFAULT_CLASS_CODE
+}
 const storageKey = "studio-bridge-class"
 function restore(): ClassIdentity | null {
   try {
@@ -68,7 +79,7 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
   const [identity, setIdentity] = useState<ClassIdentity | null>(null)
   const [joinOpen, setJoinOpen] = useState(false)
   const dialog = useRef<HTMLDialogElement>(null)
-  const [code, setCode] = useState(savedIdentity?.code || "")
+  const code = defaultCode()
   const [name, setName] = useState(savedIdentity?.anonymous ? "" : savedIdentity?.name || "")
   const [anonymous, setAnonymous] = useState(savedIdentity?.anonymous || false)
   useEffect(() => {
@@ -90,10 +101,6 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
   }
   async function join() {
     if (joining.current) return
-    if (!/^[A-Z0-9]{4}$/i.test(code.trim())) {
-      setError("Enter the four-character class code from your tutor.")
-      return
-    }
     if (!anonymous && !name.trim()) {
       setError("Enter your name or choose Anonymous.")
       return
@@ -118,7 +125,11 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
       setJoinOpen(false)
     } catch (e) {
       setError(
-        e instanceof Error ? e.message : "Couldn’t join. Please try again.",
+        e instanceof Error
+          ? e.message.startsWith("Class not found")
+            ? "The demo class is not open yet. Ask your tutor to open the Tutor UI, then try again."
+            : e.message
+          : "Couldn’t join. Please try again.",
       )
     } finally {
       joining.current = false
@@ -169,25 +180,7 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
             />{" "}
             Join as Anonymous
           </label>
-          <label htmlFor="class-code">Class code</label>
-          <input
-            id="class-code"
-            className="class-code-input"
-            maxLength={4}
-            autoCapitalize="characters"
-            autoComplete="off"
-            spellCheck={false}
-            value={code}
-            disabled={busy}
-            onChange={(e) =>
-              setCode(e.target.value.replace(/[^a-z0-9]/gi, "").toUpperCase())
-            }
-            placeholder="K7QF"
-            aria-describedby="class-code-hint"
-          />
-          <small id="class-code-hint">
-            Ask your tutor for the four-character code.
-          </small>
+          <small id="class-code-hint">You will join the shared demo class. No code needed.</small>
           {error && (
             <p className="class-join-error" role="alert">
               {error}

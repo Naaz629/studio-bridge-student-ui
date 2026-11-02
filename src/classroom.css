@@ -62,3 +62,12 @@
 .class-join-close { position:absolute; top:16px; right:18px; display:grid; place-items:center; width:30px; height:30px; border-radius:50%; background:#e6ebdf; color:#65785e; font-size:23px; line-height:1; }
 .class-join-close:focus-visible { outline:2px solid #638163; outline-offset:2px; }
 @media (prefers-reduced-transparency:reduce) { .class-join-modal::backdrop { backdrop-filter:none; background:#26302670; } }
+
+/* Activity cards never overlap: when the window is short, the card scrolls instead of squeezing its parts on top of each other. */
+.tutor-activity > * { flex-shrink: 0; }
+.tutor-activity > textarea { flex: 1 0 80px; }
+.tutor-choices { min-height: auto; }
+.embedded-activity-body.extra-activity--artefact { overflow: auto; }
+.artefact-layout { grid-template-rows: minmax(min-content, 1fr); }
+.artefact-details { grid-template-rows: auto minmax(72px, 1fr) auto auto; }
+.artefact-details label:nth-child(2) { grid-template-rows: auto minmax(72px, 1fr); }
