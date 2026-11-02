@@ -1335,7 +1335,6 @@ function LiveView({
       {questionsOpen && (
         <aside id="live-questions" className="questions-pane" aria-label="Questions sidebar">
           <header className="questions-header">
-            <BulbIcon size={22} />
             <h2>Questions</h2>
             <span className="count-badge">{questionList.length + (liveMode ? 0 : 21)}</span>
           </header>
