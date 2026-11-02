@@ -20,6 +20,7 @@ The class code has one definition in `src/class-display.ts`. Production defaults
 - Activity `peer_reply` rows appear under Replies between students, including rows without a question index. Replies retain the existing draft reducer and submission path.
 - Artefact entry retains the existing photo/camera, group, caption and submission controls. Class artefacts opens a separate view inside the same activity card, newest first. Returning preserves the photo form. The gallery does not include the current student's uploads.
 - Discussion cards only count the current client's card plays. Classmates' counts are not shown to students. This follows the specific Student Prompt 2 requirement, rather than the broader discussion-count note in the contract.
+- The lesson timeline lives in `src/lesson-navigation.ts`. Database question/activity slide references retain original slide numbers, while the navigation counter includes practice positions. Practice submissions stay local and are labelled Practice; real tutor activities keep the existing cloud submission flow. Practice records are visible in My Learning. Keyboard navigation ignores inputs, editors and dialogs.
 - At narrow laptop widths, activity cards use the available stage height instead of forcing a wide aspect ratio. Submit controls remain in normal flow. Original image slides retain their aspect ratio, and the existing sidebar, title, captions and style remain.
 
 ## Data and reliability
@@ -52,7 +53,7 @@ These variables are already configured in the existing Vercel project. They are 
 
 1. Open the [Tutor UI](https://studio-bridge-theta.vercel.app/) in one tab and the [Student UI](https://studiobridge-dddd-345f.vercel.app/) in another. Both connect to `DEMO`.
 2. Watch incoming questions, votes and reactions. The backend simulator runs while the tutor is present; it does not guarantee all 22 people act within every five-minute window.
-3. Ask/reply/upvote from the student side. Answer a question and change slides from the tutor side.
+3. Browse the full lesson freely with Previous/Next or the arrow keys. The fixed practice activities occupy positions 3, 5, 7 and 9 (after original slides 2–5). There are 23 positions: all 19 original slides plus four practice activities. Ask/reply/upvote from the student side. A **new** tutor slide/activity command switches the student back to the live position; the initial saved tutor snapshot does not interrupt browsing. Manual browsing pauses following until the next tutor command or Back to live.
 4. Start a concept activity. Submit each question and watch the distribution, average and other answers update. Check View original on a translated answer.
 5. Try discussion, reflection and artefact activities. Only your own discussion card counters move on the student side. Use Class artefacts to see classmates' uploads.
 6. Toggle the questions sidebar and test at **1024×768** and **1440×900**. Submit and thinking fields must not overlap.
@@ -67,6 +68,7 @@ pnpm test:classroom:setup
 VITE_DEMO_CLASS_CODE=<test-code> pnpm dev --host 127.0.0.1 --port 8443
 # In another terminal:
 pnpm test:classroom
+node tests/lesson-navigation.mjs
 ```
 
 `STUDIO_BRIDGE_CHROME` can select an installed Chrome executable. `STUDENT_TEST_URL` can select another deployment, provided it was built for the same isolated test class. The test asserts the class code before interacting. Test records are left for inspection because the demo contract does not grant row deletion.
@@ -74,3 +76,5 @@ pnpm test:classroom
 `tests/shared-classroom.mjs` covers automatic connection, name shortening, translated questions, Q&A replies with no live activity, simultaneous RPC votes, incoming questions/reactions, live MC bars, scale averages, open answers/translations, peer replies without `q`, reflections, own-only card counts, live artefact gallery, both target window sizes and local demo fallback. Earlier `tests/classroom.integration.mjs` and `tests/demo-entry.mjs` document the previous class-code/manual-entry flows and are not the current test command.
 
 Full contents of changed application/configuration/test files are in `STUDENT-INTEGRATION-FULL-CODE.md`. AI Advice, badges and the example helpful-answer goal retain their existing scope; this update does not introduce an AI service or authenticated attendance tracking. The slide library remains the existing 19-slide Week 6 deck.
+
+`tests/lesson-navigation.mjs` verifies all original slide images and practice positions, initial free browsing despite an existing tutor activity, navigation boundaries, new tutor commands, snapshot/heartbeat stability, Back to live, navigation out of live activities, local-only practice submissions, My Learning review and typing without accidental page changes.

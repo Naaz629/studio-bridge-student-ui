@@ -1,6 +1,6 @@
 # Studio Bridge — current integration source
 
-Full contents of the application, configuration and test files for the shared classroom integration. See [CLASSROOM-INTEGRATION.md](CLASSROOM-INTEGRATION.md). Credentials and generated files are excluded.
+Full application/configuration/test files for the shared classroom integration and free lesson browsing. See [CLASSROOM-INTEGRATION.md](CLASSROOM-INTEGRATION.md). Credentials and generated files are excluded.
 
 ## package.json
 
@@ -1102,6 +1102,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 ## src/App.tsx
 
 ```tsx
+import { lessonPages, pageForSlide, sourceSlideForPage } from "./lesson-navigation"
 import { displayStudent } from "./class-display"
 import { SharedText } from "./ClassResults"
 import { ClassBadge, useClassroom } from "./ClassRoom"
@@ -2058,7 +2059,7 @@ function LiveView({
   function submitActivity(item: ActivityRun) {
     if ((item.kind === "artefact" ? !item.photo : item.answer === null) || item.submitted) return
     dispatchActivity({ type: "submit", id: item.id })
-    notify("Response saved for this session.")
+    notify("Practice response saved on this device.")
   }
   function openPeerResponses(item: ActivityRun) {
     if (!item.submitted) return
@@ -2107,25 +2108,40 @@ function LiveView({
       applause: 9,
     })
   const teacherSlide = liveMode ? Math.max(1, Math.min(19, Number(room.state.slide) || 1)) : 17
-  const totalSlides = liveMode ? 19 : 21
-  const [viewedSlide, setViewedSlide] = useState(15)
+  const totalSlides = lessonPages.length
+  const [viewedSlide, setViewedSlide] = useState(1)
+  const [followingTutor, setFollowingTutor] = useState(false)
+  const [hasTeacherCommand, setHasTeacherCommand] = useState(false)
+  const lastTeacherCommand = useRef<string | null>(null)
   const [historicalActivityId, setHistoricalActivityId] = useState<string | null>(null)
   useEffect(() => {
-    if (reviewSlide) { setViewedSlide(reviewSlide.page); setHistoricalActivityId(reviewSlide.activityId || null); setPeerView(false) }
+    if (reviewSlide) { setFollowingTutor(false); setViewedSlide(reviewSlide.page); setHistoricalActivityId(reviewSlide.activityId || null); setPeerView(false) }
   }, [reviewSlide])
-  const isFollowingTutor = viewedSlide === teacherSlide && !historicalActivityId
-  const activity = liveMode ? undefined : activities.find((item) => item.page === viewedSlide)
+  const isFollowingTutor = liveMode && followingTutor && !historicalActivityId
+  const activity = activities.find((item) => item.page === viewedSlide)
+  const sourceSlide = sourceSlideForPage(viewedSlide)
   const remoteActivityId = liveMode ? historicalActivityId || (isFollowingTutor ? room.state.activityId : null) : null
   const remoteActivity = room.activities.find(item => item.id === remoteActivityId)
+  const originalCaption = sourceSlide === 13 || sourceSlide === 14
+    ? ["Use research insights to reframe the design problem.", "运用研究洞察重构设计问题。"]
+    : slideCaptions[(sourceSlide >= 16 ? sourceSlide + 2 : sourceSlide) - 1] || slideCaptions[0]
   const captions = remoteActivityId ? remoteActivity?.kind === "discussion" ? slideCaptions[15]
     : remoteActivity?.kind === "artefact" ? slideCaptions[16]
     : remoteActivity?.kind === "reflection" ? [remoteActivity.spec?.question || "Reflect on your learning.", "回顾你的学习，并分享思考。"]
     : remoteActivity?.kind === "qa" ? ["Share a question with your tutor and classmates.", "向老师和同学提出你的问题。"]
     : ["Use research evidence to answer your tutor’s concept check.", "运用研究证据回答老师发布的概念题。"]
-    : (slideCaptions[(liveMode && viewedSlide >= 16 ? viewedSlide + 2 : viewedSlide) - 1] || slideCaptions[0])
+    : activity ? activity.kind === "choice" ? slideCaptions[12] : activity.kind === "rating" ? slideCaptions[13] : activity.kind === "discussion" ? slideCaptions[15] : slideCaptions[16] : originalCaption
   useEffect(() => {
-    if (liveMode) { setViewedSlide(teacherSlide); setHistoricalActivityId(null); setPeerView(false) }
-  }, [liveMode, teacherSlide, room.state.activityId])
+    if (!liveMode) { lastTeacherCommand.current = null; return }
+    const command = JSON.stringify([room.state.slide || 1, room.state.activityId || null, room.state.activityKind || null, room.state.updatedAt || null])
+    // The initial snapshot is a baseline, not a new teacher command. Periodic
+    // snapshots and classmates' actions never interrupt independent browsing.
+    if (lastTeacherCommand.current === null) { lastTeacherCommand.current = command; return }
+    if (lastTeacherCommand.current === command) return
+    lastTeacherCommand.current = command
+    setHasTeacherCommand(true); setFollowingTutor(true)
+    setViewedSlide(pageForSlide(teacherSlide)); setHistoricalActivityId(null); setPeerView(false)
+  }, [liveMode, teacherSlide, room.state.activityId, room.state.activityKind, room.state.updatedAt])
   useEffect(() => {
     if (liveMode) setQuestionList(current => [
       ...current.filter(question => question.sendError && !room.questions.some(row => row.id === question.id)),
@@ -2150,10 +2166,28 @@ function LiveView({
   }, [liveMode, room.reactions])
 
   function goToPage(page: number) {
+    setFollowingTutor(false)
     setHistoricalActivityId(null)
-    setViewedSlide(Math.max(1, Math.min(teacherSlide, page)))
+    setViewedSlide(Math.max(1, Math.min(totalSlides, page)))
     setPeerView(false)
   }
+
+  function returnToTutor() {
+    setFollowingTutor(true); setHasTeacherCommand(true)
+    setHistoricalActivityId(null); setViewedSlide(pageForSlide(teacherSlide)); setPeerView(false)
+  }
+  useEffect(() => {
+    if (!active) return
+    function navigate(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || target?.closest("input, textarea, select, [contenteditable], dialog, [role=menu]")) return
+      if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+        event.preventDefault(); goToPage(viewedSlide + (event.key === "ArrowRight" ? 1 : -1))
+      }
+    }
+    window.addEventListener("keydown", navigate)
+    return () => window.removeEventListener("keydown", navigate)
+  }, [active, viewedSlide])
 
   function sendFeedback(next: LessonReaction) {
     if (room.identity) {
@@ -2189,13 +2223,13 @@ function LiveView({
       } catch { /* Questions can still be sent without local storage. */ }
     }
     const anonymous = room.identity?.anonymous || identity === "anonymous"
-    const local: ClassroomQuestion = { id, slide: viewedSlide, name: anonymous ? "Anonymous" : studentName, initials: anonymous ? "A" : studentName.slice(0,2).toUpperCase(), time: "now", text, votes: 1, same: 0, answered: false, sendError: Boolean(room.identity) }
+    const local: ClassroomQuestion = { id, slide: sourceSlide, name: anonymous ? "Anonymous" : studentName, initials: anonymous ? "A" : studentName.slice(0,2).toUpperCase(), time: "now", text, votes: 1, same: 0, answered: false, sendError: Boolean(room.identity) }
     setQuestionList(current => [local, ...current]); setComposer("")
-    onLearningEntry({ id: `live-question-${id}`, kind: "Question", title: text, detail: "Your question · Just asked in class", slide: viewedSlide, week: room.session?.week || 6 })
+    onLearningEntry({ id: `live-question-${id}`, kind: "Question", title: text, detail: "Your question · Just asked in class", slide: sourceSlide, week: room.session?.week || 6 })
     if (!room.identity) { notify("Your question was added to the demo."); return }
     questionSending.current = true
     try {
-      const result = await room.api.askQuestion({ id: String(id), text, anonymous, slide: viewedSlide, lang: /[\u3400-\u9fff]/.test(text) ? "zh" : questionLanguage })
+      const result = await room.api.askQuestion({ id: String(id), text, anonymous, slide: sourceSlide, lang: /[\u3400-\u9fff]/.test(text) ? "zh" : questionLanguage })
       if (result.data) { setQuestionList(current => [classroomQuestion(result.data!, room.identity), ...current.filter(q => q.id !== id)]); notify("Your question was sent to your tutor.") }
       else notify("Question kept on this device. Retry to send.")
     } finally { questionSending.current = false }
@@ -2262,7 +2296,7 @@ function LiveView({
       <button
         aria-label="Next page"
         className="presentation-arrow"
-        disabled={isFollowingTutor}
+        disabled={viewedSlide >= totalSlides}
         onClick={() => goToPage(viewedSlide + 1)}
         type="button"
       >
@@ -2290,10 +2324,12 @@ function LiveView({
               <span className="presentation-live">
                 <span className="live-dot" /> Following tutor
               </span>
+            ) : !hasTeacherCommand && !historicalActivityId ? (
+              <span className="presentation-live">Browse freely</span>
             ) : (
               <button
                 className="presentation-back-live"
-                onClick={() => goToPage(teacherSlide)}
+                onClick={returnToTutor}
                 type="button"
               >
                 <span className="live-dot" /> Back to live
@@ -2307,7 +2343,7 @@ function LiveView({
             <div className="slide-surface">
               {remoteActivityId ? (
                 <section className="slide embedded-activity" aria-label="Live class activity">
-                  <header className="embedded-activity-header"><span><Icon name="grid" size={16} />Class activity</span><small>{remoteActivity?.kind === "concept" ? "Concept check" : remoteActivity?.kind || "Loading"}</small></header>
+                  <header className="embedded-activity-header"><span><Icon name="grid" size={16} />Class activity</span><div className="class-activity-navigation">{pageNavigation}</div></header>
                   {remoteActivity ? <TutorActivity key={`${remoteActivity.id}:${remoteActivity.kind}`} activity={remoteActivity} onRecorded={onLearningEntry} /> : <div className="tutor-activity"><h3>Your activity is getting ready.</h3><p>Waiting for your tutor’s activity…</p></div>}
                 </section>
               ) : activity ? (
@@ -2318,7 +2354,7 @@ function LiveView({
                   <header className="embedded-activity-header">
                     <span>
                       <Icon name={peerView ? "bubble" : "grid"} size={16} />
-                      {peerView ? "Peer responses" : "Class activity"}
+                      {peerView ? "Peer responses" : "Class activity · Practice"}
                     </span>
                     <small>
                       Activity {activities.indexOf(activity) + 1} of{" "}
@@ -2365,9 +2401,9 @@ function LiveView({
                   }
                 >
                   <img
-                    alt={`IDEA9106 Week 6 tutorial slide ${viewedSlide}`}
+                    alt={`IDEA9106 Week 6 tutorial slide ${sourceSlide}`}
                     className="slide-image"
-                    src={`/assets/slides/week6/page-${String(liveMode ? viewedSlide : viewedSlide >= 18 ? viewedSlide - 2 : viewedSlide).padStart(2, "0")}.jpg`}
+                    src={`/assets/slides/week6/page-${String(sourceSlide).padStart(2, "0")}.jpg`}
                   />
                 </div>
               )}
@@ -2517,7 +2553,7 @@ function LiveView({
                   <div className="question-context">
                     <button
                       className="question-slide-link"
-                      onClick={() => goToPage(question.slide)}
+                      onClick={() => goToPage(pageForSlide(question.slide))}
                       type="button"
                       aria-label={`Go to slide ${question.slide}`}
                       title={`Go to slide ${question.slide}`}
@@ -2722,24 +2758,24 @@ function LiveView({
 }
 
 export default function App() {
+  const [activities, dispatchActivity] = useReducer(activityReducer, initialActivities)
   const room = useClassroom()
-  const sharedActivities: LearningEntry[] | undefined = room.identity ? room.activities.map(activity => {
+  const sharedActivities: LearningEntry[] | undefined = room.identity ? [...activities.map(activity => ({ id: `practice-${activity.id}`, kind: "Activity" as const, title: activityTemplates[activity.kind].title, detail: activity.submitted ? `Practice response · ${activityAnswer(activity)}` : "Practice activity · Explore at your own pace", slide: activity.page, week: room.session?.week || 6, completed: activity.submitted, image: activity.photo?.url })), ...room.activities.map(activity => {
     const own = room.responses.filter(row => row.activity_id === activity.id && row.payload.clientId === room.identity?.clientId)
     const photo = own.find(row => row.kind === "artefact")
     const questions = activity.spec?.questions || []
     const completed = activity.kind === "concept" ? questions.length > 0 && questions.every((_, q) => own.some(row => row.payload.q === q && ["choice", "rating", "open"].includes(row.kind))) : own.some(row => row.kind === activity.kind)
-    return { id: activity.id, kind: "Activity", title: activity.kind === "concept" ? "Concept check" : activity.kind === "reflection" ? activity.spec?.question || "Class reflection" : activity.kind === "discussion" ? "Discuss with your peers." : activity.kind === "artefact" ? "Your group artefact" : "Class Q&A", detail: completed ? "Your response · Sent to your tutor" : "Open this activity when your tutor makes it live.", slide: activity.slide || 1, week: room.session?.week || 6, completed, image: photo ? String(photo.payload.url || "") : undefined }
-  }) : undefined
+    return { id: activity.id, kind: "Activity" as const, title: activity.kind === "concept" ? "Concept check" : activity.kind === "reflection" ? activity.spec?.question || "Class reflection" : activity.kind === "discussion" ? "Discuss with your peers." : activity.kind === "artefact" ? "Your group artefact" : "Class Q&A", detail: completed ? "Your response · Sent to your tutor" : "Open this activity when your tutor makes it live.", slide: activity.slide || 1, week: room.session?.week || 6, completed, image: photo ? String(photo.payload.url || "") : undefined }
+  })] : undefined
   let ownedQuestionIds: string[] = []
   try { ownedQuestionIds = JSON.parse(localStorage.getItem(`studio-bridge-questions:${room.identity?.clientId}`) || "[]") } catch { /* Optional history. */ }
   const restoredQuestions: LearningEntry[] = room.questions.filter(question => ownedQuestionIds.includes(question.id)).map(question => ({ id: `live-question-${question.id}`, kind: "Question", title: question.text_en || question.text, detail: question.status === "ans" ? "Your question · Answered in class" : "Your question · Shared in class", slide: question.slide || 1, week: room.session?.week || 6 }))
   const personalEntries: LearningEntry[] = room.identity ? room.responses.filter(row => row.payload.clientId === room.identity?.clientId && ["peer_reply", "qa_reply"].includes(row.kind)).map(row => ({ id: `live-response-${row.id}`, kind: "Response", title: String(row.payload.text || ""), detail: "Your reply · Shared in class", slide: room.activities.find(a => a.id === row.activity_id)?.slide || 1, week: room.session?.week || 6 })) : []
-  const [activities, dispatchActivity] = useReducer(activityReducer, initialActivities)
   const [section, setSection] = useState<Section>("live")
   const [questionsOpen, setQuestionsOpen] = useState(true)
   const [learningEntries, setLearningEntries] = useState(initialLearningEntries)
   const [reviewSlide, setReviewSlide] = useState<{page: number; request: number; activityId?: string} | null>(null)
-  function reviewLearningSlide(page: number) { setReviewSlide({page, request: Date.now()}); setSection("live") }
+  function reviewLearningSlide(page: number) { setReviewSlide({page: pageForSlide(page), request: Date.now()}); setSection("live") }
   function recordLearning(entry: LearningEntry) { setLearningEntries(current => [entry, ...current.filter(e => e.id !== entry.id)]) }
   const [toast, setToast] = useState("")
   const toastTimer = useMemo(() => ({ current: 0 }), [])
@@ -2770,7 +2806,7 @@ export default function App() {
             <LiveView active={section === "live"} notify={notify} questionsOpen={questionsOpen} onLearningEntry={recordLearning} reviewSlide={reviewSlide} activities={activities} dispatchActivity={dispatchActivity} />
           </div>
           <div className="learning-view-container" hidden={section !== "learning"}>
-            <MyLearning activities={room.identity ? [] : activities} sharedActivities={sharedActivities} onReviewActivity={room.identity ? (activityId, page) => { setReviewSlide({page, activityId, request: Date.now()}); setSection("live") } : undefined} entries={room.identity ? [...restoredQuestions, ...personalEntries, ...learningEntries.filter(entry => (entry.id.startsWith("live-question") || entry.id.startsWith("live-response")) && ![...personalEntries, ...restoredQuestions].some(p => p.id === entry.id))] : learningEntries} onReviewSlide={reviewLearningSlide}
+            <MyLearning activities={room.identity ? [] : activities} sharedActivities={sharedActivities} onReviewActivity={(activityId, page) => { setReviewSlide({page: /^(practice|activity)-/.test(activityId) ? page : pageForSlide(page), activityId: /^(practice|activity)-/.test(activityId) ? undefined : activityId, request: Date.now()}); setSection("live") }} entries={room.identity ? [...restoredQuestions, ...personalEntries, ...learningEntries.filter(entry => (entry.id.startsWith("live-question") || entry.id.startsWith("live-response")) && ![...personalEntries, ...restoredQuestions].some(p => p.id === entry.id))] : learningEntries} onReviewSlide={reviewLearningSlide}
               onShareReflection={room.state.activityId && room.activities.find(a => a.id === room.state.activityId)?.kind === "reflection" ? async text => {
                 const result = await room.api.submitResponse({ activityId: room.state.activityId!, kind: "reflection", payload: { text, lang: /[\u3400-\u9fff]/.test(text) ? "zh" : "en" } })
                 return result.error || "Reflection sent to your tutor ✓"
@@ -3089,6 +3125,122 @@ export default function ExtraActivity({ activity, dispatch, active, pending = fa
       <span className="sr-only" role="status">{announcement}</span>
     </>}
   </div>
+}
+```
+
+## src/activity-state.ts
+
+```typescript
+export type ActivityKind = "choice" | "rating" | "discussion" | "artefact"
+
+export type ActivityRun = {
+  id: number
+  page: number
+  kind: ActivityKind
+  answer: number | null
+  submitted: boolean
+  cardCounts?: number[]
+  photo?: { url: string; name: string; group: string; caption: string }
+}
+
+export const activityTemplates = {
+  choice: {
+    label: "Multiple choice",
+    title: "What makes a useful persona?",
+    description: "Think about the evidence behind the people you design for.",
+    options: [
+      "Patterns grounded in research with real users",
+      "A detailed description of your ideal customer",
+      "Assumptions based on age and demographics",
+      "A fictional character that everyone agrees on",
+    ],
+  },
+  discussion: { label: "Discussion", title: "Discuss with your peers.", description: "Use your cards to share what you think.", options: ["Agree", "Disagree", "Take a turn", "Clarify", "Share an idea"] },
+  artefact: { label: "Group artefact", title: "Show what your group made.", description: "Capture your persona, reframed brief or a work-in-progress sketch.", options: [] },
+  rating: {
+    label: "Confidence check",
+    title: "How confident are you with reframing?",
+    description:
+      "How ready do you feel to turn a research insight into a useful problem statement?",
+    options: [],
+  },
+} satisfies Record<ActivityKind, {
+  label: string
+  title: string
+  description: string
+  options: string[]
+}>
+
+export const initialActivities: ActivityRun[] = [
+  { id: 1, page: 3, kind: "choice", answer: null, submitted: false },
+  { id: 2, page: 5, kind: "rating", answer: null, submitted: false },
+  { id: 3, page: 7, kind: "discussion", answer: null, submitted: false },
+  { id: 4, page: 9, kind: "artefact", answer: null, submitted: false },
+]
+
+export type ActivityAction = {
+  type: "select"
+  id: number
+  answer: number
+} | { type: "submit"; id: number } | { type: "play"; id: number; card: number } | { type: "photo"; id: number; photo: NonNullable<ActivityRun["photo"]> }
+
+export function activityReducer(
+  state: ActivityRun[],
+  action: ActivityAction,
+): ActivityRun[] {
+  return state.map((run) => {
+    if (run.id !== action.id) return run
+    if (action.type === "play") {
+      if (run.kind !== "discussion" || !Number.isInteger(action.card) || action.card < 0 || action.card > 4) return run
+      const counts = [...(run.cardCounts || [0,0,0,0,0])]; counts[action.card]++
+      return { ...run, answer: action.card, submitted: true, cardCounts: counts }
+    }
+    if (run.submitted) return run
+    if (action.type === "photo") return run.kind === "artefact" ? { ...run, photo: action.photo } : run
+    if (action.type === "submit") {
+      return (run.kind === "artefact" ? !run.photo : run.answer === null) ? run : { ...run, submitted: true }
+    }
+    const min = run.kind === "rating" ? 1 : 0
+    const max =
+      run.kind === "rating" ? 5 : activityTemplates.choice.options.length - 1
+    return Number.isInteger(action.answer) &&
+      action.answer >= min &&
+      action.answer <= max
+      ? { ...run, answer: action.answer }
+      : run
+  })
+}
+
+export function activityAnswer(run: ActivityRun): string {
+  if (run.kind === "artefact") return run.photo ? [run.photo.group, run.photo.name, run.photo.caption].filter(Boolean).join(" · ") : "No photo submitted"
+  if (run.kind === "discussion") return run.submitted ? `${(run.cardCounts || []).reduce((a,b) => a+b,0)} cards played · Last card: ${activityTemplates.discussion.options[run.answer || 0]}` : "No cards played yet"
+  if (run.answer === null) return "No response"
+  return run.kind === "rating"
+    ? `${run.answer} / 5`
+    : activityTemplates.choice.options[run.answer]
+}
+```
+
+## src/lesson-navigation.ts
+
+```typescript
+import type { ActivityKind } from "./activity-state"
+export type LessonPage = { kind: "slide"; slide: number } | { kind: "activity"; activityKind: ActivityKind; afterSlide: number }
+const practiceAfter: Partial<Record<number, ActivityKind>> = { 2: "choice", 3: "rating", 4: "discussion", 5: "artefact" }
+export const lessonPages: LessonPage[] = Array.from({ length: 19 }, (_, index) => {
+  const slide = index + 1
+  const pages: LessonPage[] = [{ kind: "slide", slide }]
+  const activityKind = practiceAfter[slide]
+  if (activityKind) pages.push({ kind: "activity", activityKind, afterSlide: slide })
+  return pages
+}).flat()
+export function pageForSlide(slide: number) {
+  const safe = Math.max(1, Math.min(19, Math.trunc(slide) || 1))
+  return lessonPages.findIndex(page => page.kind === "slide" && page.slide === safe) + 1
+}
+export function sourceSlideForPage(page: number) {
+  const item = lessonPages[Math.max(0, Math.min(lessonPages.length - 1, page - 1))]
+  return item.kind === "slide" ? item.slide : item.afterSlide
 }
 ```
 
@@ -4599,6 +4751,13 @@ export default function LivePeers({
   .slide-surface:has(.tutor-activity),.slide-surface:has(.tutor-activity-shell) { height:100%; aspect-ratio:auto; max-height:100%; }
   .slide-surface > .embedded-activity:has(.tutor-activity),.slide-surface > .embedded-activity:has(.tutor-activity-shell) { aspect-ratio:auto; }
 }
+.class-activity-navigation .presentation-arrows { position:static; transform:none; box-shadow:none; background:rgba(255,255,255,.55); border-radius:9px; }
+.class-activity-navigation .presentation-arrow { width:26px; height:24px; }
+.class-activity-navigation .presentation-page { font-size:10px; }
+@media(max-width:1150px) {
+  .slide-surface:has(> .embedded-activity) { height:100%; aspect-ratio:auto; max-height:100%; }
+  .slide-surface > .embedded-activity { aspect-ratio:auto; }
+}
 ```
 
 ## tests/create-test-class.mjs
@@ -4728,5 +4887,68 @@ try{
  await page.screenshot({path:'work/qa/shared-gallery.png'})
  await page.getByRole('button',{name:'Leave class',exact:true}).click();await page.getByRole('button',{name:'Join a class',exact:true}).waitFor();await page.locator('.slide-image').waitFor()
  assert.equal(errors.length,0,errors.join('\n'));console.log('PASS artefact gallery live updates / normal-flow submit 1024 & 1440 / offline sample mode / no browser errors')
+}finally{await browser.close()}
+```
+
+## tests/lesson-navigation.mjs
+
+```javascript
+import assert from 'node:assert/strict'
+import{readFileSync,mkdirSync}from'node:fs'
+import{createClient}from'@supabase/supabase-js'
+import{loadEnv}from'vite'
+import{chromium}from'@playwright/test'
+const {code}=JSON.parse(readFileSync('work/test-class.json'));assert.notEqual(code,'DEMO')
+const e=loadEnv('development',process.cwd(),'VITE_');const db=createClient(e.VITE_SUPABASE_URL,e.VITE_SUPABASE_ANON_KEY,{auth:{persistSession:false}})
+const aid=code+'-navigation'
+const a=await db.from('activities').insert({id:aid,session:code,kind:'concept',slide:18,spec:{questions:[{type:'mc',text:'Teacher controlled activity',options:[{t:'Evidence'},{t:'Assumptions'}]}]}});if(a.error)throw a.error
+async function command(slide,activityId=null){const r=await db.from('sessions').update({state:{slide,activityId,activityKind:activityId?'concept':null,updatedAt:new Date().toISOString()}}).eq('code',code);if(r.error)throw r.error}
+await command(18,aid)
+const browser=await chromium.launch({...(process.env.STUDIO_BRIDGE_CHROME?{executablePath:process.env.STUDIO_BRIDGE_CHROME}:{}),headless:true});mkdirSync('work/qa',{recursive:true})
+try{
+ const p=await browser.newPage({viewport:{width:1440,height:900}});const errors=[];p.on('pageerror',err=>errors.push(err.message))
+ await p.goto(process.env.STUDENT_TEST_URL||'http://127.0.0.1:8443/');await p.getByText('● Connected',{exact:true}).first().waitFor()
+ assert.equal(await p.evaluate(()=>JSON.parse(localStorage.getItem('studio-bridge-class')).code),code)
+ const nav=p.getByRole('navigation',{name:'Slides and activities'});const next=nav.getByRole('button',{name:'Next page',exact:true})
+ await p.locator('.slide-image[src$="page-01.jpg"]').waitFor();await p.getByText('Browse freely',{exact:true}).waitFor()
+ const activityPages={3:'What makes a useful persona?',5:'How confident are you with reframing?',7:'Discuss with your peers.',9:'Show what your group made.'}
+ let source=0
+ for(let page=1;page<=23;page++){
+  await nav.locator('.presentation-page').filter({hasText:new RegExp('^'+page+'\\s*/\\s*23$')}).waitFor()
+  if(activityPages[page]) await p.getByRole('heading',{name:activityPages[page],exact:true}).waitFor()
+  else{source++;await p.locator(`.slide-image[src$="page-${String(source).padStart(2,'0')}.jpg"]`).waitFor()}
+  if(page<23)await next.click()
+ }
+ assert.equal(source,19);assert.ok(await next.isDisabled());console.log('PASS 19 original slides / fixed practice at 3,5,7,9 / no tutor-page limit')
+ // Keyboard navigation can leave the final page and preserves the first/last boundaries.
+ await p.keyboard.press('ArrowLeft');await nav.locator('.presentation-page').filter({hasText:/^22\s*\/\s*23$/}).waitFor()
+ await command(10)
+ await p.locator('.slide-image[src$="page-10.jpg"]').waitFor();await p.getByText('Following tutor',{exact:true}).waitFor()
+ await next.click();await p.locator('.slide-image[src$="page-11.jpg"]').waitFor()
+ await db.from('reactions').insert({session:code,kind:'got',student:'Navigation tester'})
+ await p.getByRole('button',{name:/Got it, 1 reactions/}).waitFor()
+ await p.locator('.slide-image[src$="page-11.jpg"]').waitFor()
+ // A repeated snapshot/heartbeat must not reset manual browsing.
+ await db.from('sessions').update({unit:'Navigation test class'}).eq('code',code)
+ await p.getByText('Navigation test class · Week 6',{exact:true}).waitFor()
+ await p.locator('.slide-image[src$="page-11.jpg"]').waitFor()
+ await p.getByRole('button',{name:'Back to live',exact:true}).click();await p.locator('.slide-image[src$="page-10.jpg"]').waitFor()
+ await command(12,aid)
+ await p.getByRole('heading',{name:'Teacher controlled activity',exact:true}).waitFor()
+ await next.click();await p.locator('.slide-image[src$="page-13.jpg"]').waitFor()
+ await p.getByRole('button',{name:'Back to live',exact:true}).click();await p.getByRole('heading',{name:'Teacher controlled activity',exact:true}).waitFor()
+ await command(2)
+ await p.locator('.slide-image[src$="page-02.jpg"]').waitFor();await next.click();await p.getByRole('heading',{name:'What makes a useful persona?',exact:true}).waitFor()
+ const before=await db.from('responses').select('id',{count:'exact',head:true}).eq('session',code)
+ await p.getByLabel('Patterns grounded in research with real users',{exact:false}).check()
+ await p.getByRole('button',{name:'Submit response',exact:false}).click();await p.getByText('You’re all set.',{exact:true}).waitFor()
+ const after=await db.from('responses').select('id',{count:'exact',head:true}).eq('session',code);assert.equal(after.count,before.count)
+ await p.getByRole('button',{name:'My Learning',exact:true}).click()
+ const entry=p.locator('.learning-entry').filter({has:p.getByRole('heading',{name:'What makes a useful persona?',exact:true})})
+ await entry.getByRole('button',{name:/View response/}).click();await p.getByText('You’re all set.',{exact:true}).waitFor()
+ const form=p.locator('.ask-composer textarea');await form.focus();await p.keyboard.press('ArrowRight');await p.getByText('You’re all set.',{exact:true}).waitFor()
+ await p.screenshot({path:'work/qa/free-browsing.png'})
+ console.log('PASS teacher commands take over / manual browsing survives snapshots / return to live / live activity navigation / practice remains local / My Learning / typing does not flip pages')
+ assert.equal(errors.length,0,errors.join('\n'))
 }finally{await browser.close()}
 ```

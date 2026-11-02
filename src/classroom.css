@@ -96,3 +96,10 @@
   .slide-surface:has(.tutor-activity),.slide-surface:has(.tutor-activity-shell) { height:100%; aspect-ratio:auto; max-height:100%; }
   .slide-surface > .embedded-activity:has(.tutor-activity),.slide-surface > .embedded-activity:has(.tutor-activity-shell) { aspect-ratio:auto; }
 }
+.class-activity-navigation .presentation-arrows { position:static; transform:none; box-shadow:none; background:rgba(255,255,255,.55); border-radius:9px; }
+.class-activity-navigation .presentation-arrow { width:26px; height:24px; }
+.class-activity-navigation .presentation-page { font-size:10px; }
+@media(max-width:1150px) {
+  .slide-surface:has(> .embedded-activity) { height:100%; aspect-ratio:auto; max-height:100%; }
+  .slide-surface > .embedded-activity { aspect-ratio:auto; }
+}
