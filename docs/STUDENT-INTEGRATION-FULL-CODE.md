@@ -4751,26 +4751,26 @@ export default function LivePeers({
   .slide-surface:has(.tutor-activity),.slide-surface:has(.tutor-activity-shell) { height:100%; aspect-ratio:auto; max-height:100%; }
   .slide-surface > .embedded-activity:has(.tutor-activity),.slide-surface > .embedded-activity:has(.tutor-activity-shell) { aspect-ratio:auto; }
 }
-.class-activity-navigation .presentation-arrows { position:static; transform:none; box-shadow:none; background:rgba(255,255,255,.55); border-radius:9px; }
-.class-activity-navigation .presentation-arrow { width:26px; height:24px; }
-.class-activity-navigation .presentation-page { font-size:10px; }
+.class-activity-navigation .presentation-arrows { position:static; transform:none; }
+.embedded-activity-header:has(.class-activity-navigation) { padding-block:6px; }
 @media(max-width:1150px) {
   .slide-surface:has(> .embedded-activity) { height:100%; aspect-ratio:auto; max-height:100%; }
   .slide-surface > .embedded-activity { aspect-ratio:auto; }
 }
-/* Keep slide navigation readable over detailed lecture artwork. */
-.slide-surface:has(.slide-image) > .presentation-arrows {
-  bottom:12px; padding:5px; gap:6px;
-  background:rgba(252,253,249,.95);
-  border:1px solid rgba(255,255,255,.98);
-  box-shadow:0 6px 22px rgba(38,48,38,.22),0 1px 4px rgba(38,48,38,.12),inset 0 1px 0 white;
-  backdrop-filter:blur(24px) saturate(1.15);
+/* One glass navigation treatment for slides, practice and tutor activities. */
+.presentation-arrows.glass {
+  bottom:12px; padding:5px; gap:6px; border-radius:14px;
+  background:rgba(248,251,244,.56);
+  border:1px solid rgba(255,255,255,.82);
+  box-shadow:0 5px 18px rgba(38,48,38,.14),inset 0 1px 0 rgba(255,255,255,.95),inset 0 -1px 0 rgba(52,75,53,.06);
+  backdrop-filter:blur(28px) saturate(1.4);
+  -webkit-backdrop-filter:blur(28px) saturate(1.4);
 }
-.slide-surface:has(.slide-image) > .presentation-arrows .presentation-arrow { width:36px; height:36px; }
-.slide-surface:has(.slide-image) > .presentation-arrows .presentation-arrow:not(.previous):not(:disabled) { background:var(--olive); color:white; box-shadow:0 2px 5px rgba(38,48,38,.15); }
-.slide-surface:has(.slide-image) > .presentation-arrows .presentation-arrow:not(.previous):hover:not(:disabled) { background:#456044; }
-.slide-surface:has(.slide-image) > .presentation-arrows .presentation-arrow:disabled { opacity:1; color:#a2aa9c; background:rgba(52,75,53,.045); }
-.slide-surface:has(.slide-image) > .presentation-arrows .presentation-page { color:#293b2a; }
+.presentation-arrows .presentation-arrow { width:36px; height:36px; border-radius:9px; }
+.presentation-arrows .presentation-arrow:not(.previous):not(:disabled) { background:rgba(52,75,53,.13); color:#2e4930; box-shadow:inset 0 1px 0 rgba(255,255,255,.7); }
+.presentation-arrows .presentation-arrow:hover:not(:disabled) { background:rgba(52,75,53,.2); }
+.presentation-arrows .presentation-arrow:disabled { opacity:1; color:#a2aa9c; background:rgba(52,75,53,.035); }
+.presentation-arrows .presentation-page { min-width:52px; color:#293b2a; font-size:11px; }
 .presentation-arrow:focus-visible { outline:2px solid #638163; outline-offset:2px; }
 ```
 
