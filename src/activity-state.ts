@@ -39,10 +39,10 @@ export const activityTemplates = {
 }>
 
 export const initialActivities: ActivityRun[] = [
-  { id: 1, page: 13, kind: "choice", answer: null, submitted: false },
-  { id: 2, page: 14, kind: "rating", answer: null, submitted: false },
-  { id: 3, page: 16, kind: "discussion", answer: null, submitted: false },
-  { id: 4, page: 17, kind: "artefact", answer: null, submitted: false },
+  { id: 1, page: 3, kind: "choice", answer: null, submitted: false },
+  { id: 2, page: 5, kind: "rating", answer: null, submitted: false },
+  { id: 3, page: 7, kind: "discussion", answer: null, submitted: false },
+  { id: 4, page: 9, kind: "artefact", answer: null, submitted: false },
 ]
 
 export type ActivityAction = {

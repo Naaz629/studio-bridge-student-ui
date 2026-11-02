@@ -1,3 +1,4 @@
+import { DEMO_CLASS_CODE } from "./class-display"
 import {
   createContext,
   useContext,
@@ -8,22 +9,11 @@ import {
   type ReactNode,
 } from "react"
 import { createClassApi } from "./class-api"
-import { findClass, useClassSession } from "./class-session"
+import { useClassSession } from "./class-session"
 import type { ClassIdentity } from "./class-types"
 import { supabase } from "./supabase"
 import "./classroom.css"
 
-/* This is a demo: everyone joins one shared class, so there is no code to type. Add ?code=ABCD to the address to try another class. */
-const DEFAULT_CLASS_CODE = (import.meta.env.VITE_DEFAULT_CLASS_CODE || "DEMO").toUpperCase()
-function defaultCode() {
-  try {
-    const fromUrl = new URLSearchParams(window.location.search).get("code")
-    if (fromUrl && /^[A-Z0-9]{4}$/i.test(fromUrl)) return fromUrl.toUpperCase()
-  } catch {
-    /* Use the demo class. */
-  }
-  return DEFAULT_CLASS_CODE
-}
 const storageKey = "studio-bridge-class"
 function restore(): ClassIdentity | null {
   try {
@@ -50,7 +40,11 @@ function useRoomValue(identity: ClassIdentity | null, leave: () => void, openJoi
   // Event handlers doing uploads can check the latest tutor state after awaiting.
   const currentActivityId = useRef(activityId)
   currentActivityId.current = activityId
-  return { ...live, identity, api, leave, openJoin, sendError, currentActivityId }
+  const activeNames = new Set([...live.questions, ...live.reactions, ...live.responses]
+    .filter(row => Date.parse(row.created_at) > Date.now() - 5 * 60 * 1000)
+    .map(row => row.student).filter((name): name is string => !!name && name !== identity?.name))
+  const activeStudents = activeNames.size + (identity ? 1 : 0)
+  return { ...live, identity, api, leave, openJoin, sendError, currentActivityId, activeStudents }
 }
 type RoomValue = ReturnType<typeof useRoomValue>
 const RoomContext = createContext<RoomValue | null>(null)
@@ -75,11 +69,13 @@ function JoinedClass({
 }
 export default function ClassRoom({ children }: { children: ReactNode }) {
   const [savedIdentity] = useState(restore)
-  // Opening the app always starts in Demo; saved details only prefill the join dialog.
-  const [identity, setIdentity] = useState<ClassIdentity | null>(null)
+  const [identity, setIdentity] = useState<ClassIdentity | null>(() => {
+    const current = savedIdentity ? { ...savedIdentity, code: DEMO_CLASS_CODE } : { code: DEMO_CLASS_CODE, name: "Anonymous", anonymous: true, clientId: crypto.randomUUID() }
+    try { localStorage.setItem(storageKey, JSON.stringify(current)) } catch { /* In-memory fallback. */ }
+    return current
+  })
   const [joinOpen, setJoinOpen] = useState(false)
   const dialog = useRef<HTMLDialogElement>(null)
-  const code = defaultCode()
   const [name, setName] = useState(savedIdentity?.anonymous ? "" : savedIdentity?.name || "")
   const [anonymous, setAnonymous] = useState(savedIdentity?.anonymous || false)
   useEffect(() => {
@@ -109,12 +105,11 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
     setBusy(true)
     setError("")
     try {
-      const row = await findClass(code.trim())
       const next = {
-        code: row.code.toUpperCase(),
+        code: DEMO_CLASS_CODE,
         name: anonymous ? "Anonymous" : name.trim(),
         anonymous,
-        clientId: savedIdentity?.code === row.code.toUpperCase() && savedIdentity.name === (anonymous ? "Anonymous" : name.trim()) && savedIdentity.anonymous === anonymous ? savedIdentity.clientId : crypto.randomUUID(),
+        clientId: identity?.clientId || savedIdentity?.clientId || crypto.randomUUID(),
       }
       try {
         localStorage.setItem(storageKey, JSON.stringify(next))
@@ -125,11 +120,7 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
       setJoinOpen(false)
     } catch (e) {
       setError(
-        e instanceof Error
-          ? e.message.startsWith("Class not found")
-            ? "The demo class is not open yet. Ask your tutor to open the Tutor UI, then try again."
-            : e.message
-          : "Couldn’t join. Please try again.",
+        e instanceof Error ? e.message : "Couldn’t join. Please try again.",
       )
     } finally {
       joining.current = false
@@ -153,8 +144,8 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
           alt="Studio Bridge"
         />
         <span className="eyebrow">YOUR STUDIO, TOGETHER</span>
-        <h1 id="class-join-title">Join your class.</h1>
-        <p>Bring your questions, ideas and work into the conversation.</p>
+        <h1 id="class-join-title">Your classroom name.</h1>
+        <p>You’re joining the shared live classroom. Choose how classmates see you.</p>
         <form
           onSubmit={(e) => {
             e.preventDefault()
@@ -180,7 +171,6 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
             />{" "}
             Join as Anonymous
           </label>
-          <small id="class-code-hint">You will join the shared demo class. No code needed.</small>
           {error && (
             <p className="class-join-error" role="alert">
               {error}
@@ -196,7 +186,7 @@ export default function ClassRoom({ children }: { children: ReactNode }) {
             disabled={busy || !supabase}
             type="submit"
           >
-            {busy ? "Joining…" : "Join class"} <span aria-hidden="true">→</span>
+            {busy ? "Joining…" : "Save & connect"} <span aria-hidden="true">→</span>
           </button>
         </form>
         <button
@@ -217,7 +207,7 @@ export function ClassBadge() {
   return (
     <div className="class-badge-row">
       <span className="class-code-chip">
-        {room.identity ? `Class ${room.identity.code}` : "Demo"}
+        {room.identity ? "Live class" : "Demo"}
       </span>
       <span
         className="class-connection"
@@ -228,6 +218,7 @@ export function ClassBadge() {
           ? "● Connected"
           : "○ Not connected"}
       </span>
+      {room.identity && <><span className="class-presence"><span className="live-dot" /> {room.activeStudents} in class</span><button type="button" onClick={room.openJoin}>Your name</button></>}
       <button type="button" onClick={room.identity ? room.leave : room.openJoin}>
         {room.identity ? "Leave class" : "Join a class"}
       </button>

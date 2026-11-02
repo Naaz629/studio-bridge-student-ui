@@ -48,6 +48,15 @@ export function useClassSession(identity: ClassIdentity | null) {
       request = 0,
       subscribed = false
     const code = identity.code
+    async function readRows(table: string) {
+      const data: unknown[] = []
+      for (let from = 0; ; from += 1000) {
+        const page = await client!.from(table).select("*").eq("session", code).order("created_at", { ascending: table !== "questions" }).order("id").range(from, from + 999)
+        if (page.error) throw page.error
+        data.push(...page.data)
+        if (page.data.length < 1000) return { data, error: null }
+      }
+    }
     async function refresh() {
       const version = ++request
       try {
@@ -57,26 +66,7 @@ export function useClassSession(identity: ClassIdentity | null) {
             .select("code,unit,week,state")
             .eq("code", code)
             .single(),
-          client!
-            .from("activities")
-            .select("*")
-            .eq("session", code)
-            .order("created_at"),
-          client!
-            .from("questions")
-            .select("*")
-            .eq("session", code)
-            .order("created_at", { ascending: false }),
-          client!
-            .from("responses")
-            .select("*")
-            .eq("session", code)
-            .order("created_at"),
-          client!
-            .from("reactions")
-            .select("*")
-            .eq("session", code)
-            .order("created_at"),
+          readRows("activities"), readRows("questions"), readRows("responses"), readRows("reactions"),
         ])
         if (!active || version !== request) return
         if (results.some((r) => r.error)) throw new Error("Class unavailable")
@@ -91,15 +81,6 @@ export function useClassSession(identity: ClassIdentity | null) {
         if (active && version === request) setConnected(false)
       }
     }
-    // A busy class sends many changes per second: merge them into one refresh every 400 ms.
-    let refreshTimer = 0
-    function queueRefresh() {
-      if (refreshTimer) return
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = 0
-        void refresh()
-      }, 400)
-    }
     // Subscribe before the snapshot, then refresh on SUBSCRIBED and reconnect:
     // a tutor update cannot fall into the initial fetch/subscription gap.
     const channel = client
@@ -113,17 +94,21 @@ export function useClassSession(identity: ClassIdentity | null) {
           filter: `code=eq.${code}`,
         },
         (p) => {
-          if (active && p.new && "code" in p.new) setSession(p.new as ClassRow)
+          if (active && p.new && "code" in p.new) { request++; setSession(p.new as ClassRow); scheduleRefresh() }
         },
       )
+    let refreshTimer = 0
+    function scheduleRefresh() {
+      window.clearTimeout(refreshTimer)
+      refreshTimer = window.setTimeout(() => { if (active) void refresh() }, 80)
+    }
     for (const table of ["activities", "questions", "responses", "reactions"]) {
       channel.on(
         "postgres_changes",
         { event: "*", schema: "public", table, filter: `session=eq.${code}` },
         () => {
-          queueRefresh()
+          scheduleRefresh()
         },
-
       )
     }
     channel.subscribe((status) => {
@@ -139,9 +124,9 @@ export function useClassSession(identity: ClassIdentity | null) {
     window.addEventListener("offline", offline)
     return () => {
       active = false
-      window.clearTimeout(refreshTimer)
       request++
       window.clearInterval(interval)
+      window.clearTimeout(refreshTimer)
       window.removeEventListener("online", refresh)
       window.removeEventListener("offline", offline)
       void client.removeChannel(channel)
