@@ -4758,6 +4758,20 @@ export default function LivePeers({
   .slide-surface:has(> .embedded-activity) { height:100%; aspect-ratio:auto; max-height:100%; }
   .slide-surface > .embedded-activity { aspect-ratio:auto; }
 }
+/* Keep slide navigation readable over detailed lecture artwork. */
+.slide-surface:has(.slide-image) > .presentation-arrows {
+  bottom:12px; padding:5px; gap:6px;
+  background:rgba(252,253,249,.95);
+  border:1px solid rgba(255,255,255,.98);
+  box-shadow:0 6px 22px rgba(38,48,38,.22),0 1px 4px rgba(38,48,38,.12),inset 0 1px 0 white;
+  backdrop-filter:blur(24px) saturate(1.15);
+}
+.slide-surface:has(.slide-image) > .presentation-arrows .presentation-arrow { width:36px; height:36px; }
+.slide-surface:has(.slide-image) > .presentation-arrows .presentation-arrow:not(.previous):not(:disabled) { background:var(--olive); color:white; box-shadow:0 2px 5px rgba(38,48,38,.15); }
+.slide-surface:has(.slide-image) > .presentation-arrows .presentation-arrow:not(.previous):hover:not(:disabled) { background:#456044; }
+.slide-surface:has(.slide-image) > .presentation-arrows .presentation-arrow:disabled { opacity:1; color:#a2aa9c; background:rgba(52,75,53,.045); }
+.slide-surface:has(.slide-image) > .presentation-arrows .presentation-page { color:#293b2a; }
+.presentation-arrow:focus-visible { outline:2px solid #638163; outline-offset:2px; }
 ```
 
 ## tests/create-test-class.mjs
