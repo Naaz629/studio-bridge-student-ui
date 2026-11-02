@@ -353,11 +353,6 @@ function Sidebar({
   ]
   return (
     <aside className="sidebar">
-      <div className="traffic-lights" aria-label="Window controls">
-        <span className="traffic red" />
-        <span className="traffic yellow" />
-        <span className="traffic green" />
-      </div>
       <div className="brand">
         <div className="brand-mark" aria-hidden="true">
           <img alt="" height="30" src="/assets/studio-bridge-logo.svg" width="30" />
