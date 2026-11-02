@@ -117,3 +117,12 @@
 .presentation-arrows .presentation-arrow:disabled { opacity:1; color:#a2aa9c; background:rgba(52,75,53,.035); }
 .presentation-arrows .presentation-page { min-width:52px; color:#293b2a; font-size:11px; }
 .presentation-arrow:focus-visible { outline:2px solid #638163; outline-offset:2px; }
+
+/* Keep activity controls accessible in short windows. */
+.tutor-activity > * { flex-shrink: 0; }
+.tutor-activity > textarea { flex: 1 0 80px; }
+.tutor-choices { min-height: auto; }
+.embedded-activity-body.extra-activity--artefact { overflow: auto; }
+.artefact-layout { grid-template-rows: minmax(min-content, 1fr); }
+.artefact-details { grid-template-rows: auto minmax(72px, 1fr) auto auto; }
+.artefact-details label:nth-child(2) { grid-template-rows: auto minmax(72px, 1fr); }

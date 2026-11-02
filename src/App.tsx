@@ -1,3 +1,4 @@
+import BulbIcon from "./BulbIcon"
 import { lessonPages, pageForSlide, sourceSlideForPage } from "./lesson-navigation"
 import { displayStudent } from "./class-display"
 import { SharedText } from "./ClassResults"
@@ -1377,7 +1378,7 @@ function LiveView({
       {questionsOpen && (
         <aside id="live-questions" className="questions-pane" aria-label="Questions sidebar">
           <header className="questions-header">
-            <Icon name="bubble" size={17} />
+            <BulbIcon size={20} />
             <h2>Questions</h2>
             <span className="count-badge">{questionList.length + (liveMode ? 0 : 21)}</span>
           </header>
@@ -1434,9 +1435,10 @@ function LiveView({
                   <div className="question-actions">
                     <button
                       onClick={() => void voteQuestion(question)}
+                      aria-label="Upvote question"
                       type="button"
                     >
-                      <span className="up-arrow">↑</span> {question.votes}
+                      <span className="up-arrow" aria-hidden="true">↑</span>
                     </button>
                     <button type="button" aria-expanded={replyQuestion === question.id} aria-controls={`question-reply-${question.id}`} onClick={() => setReplyQuestion(current => current === question.id ? null : question.id)}>
                       <Icon name="bubble" size={14} /> Reply{questionReplies[question.id]?.length ? ` · ${questionReplies[question.id].length}` : ""}
@@ -1690,7 +1692,7 @@ export default function App() {
               title={questionsOpen ? "Hide questions" : "Show questions"}
               onClick={() => setQuestionsOpen(current => !current)}
             >
-              <Icon name="sidebar" size={19} />
+              <BulbIcon size={24} />
             </button>
           )}
           <div className="live-view-container" hidden={section !== "live"}>
