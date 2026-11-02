@@ -135,3 +135,11 @@
 .qa-spotlight .question-text { margin: 18px 0 6px; font-size: clamp(18px, 2vw, 24px); line-height: 1.35; font-weight: 550; }
 .qa-spotlight .question-actions { display: flex; justify-content: space-between; margin-top: 14px; padding-top: 10px; font-size: 14px; color: #73796e; }
 .qa-spotlight .qa-spotlight-slide { color: #456045; font-weight: 550; }
+/* Keep activity controls accessible in short windows. */
+.tutor-activity > * { flex-shrink: 0; }
+.tutor-activity > textarea { flex: 1 0 80px; }
+.tutor-choices { min-height: auto; }
+.embedded-activity-body.extra-activity--artefact { overflow: auto; }
+.artefact-layout { grid-template-rows: minmax(min-content, 1fr); }
+.artefact-details { grid-template-rows: auto minmax(72px, 1fr) auto auto; }
+.artefact-details label:nth-child(2) { grid-template-rows: auto minmax(72px, 1fr); }

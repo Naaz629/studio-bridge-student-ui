@@ -1102,6 +1102,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 ## src/App.tsx
 
 ```tsx
+import BulbIcon from "./BulbIcon"
 import { lessonPages, pageForSlide, sourceSlideForPage } from "./lesson-navigation"
 import { displayStudent } from "./class-display"
 import { SharedText } from "./ClassResults"
@@ -1457,11 +1458,6 @@ function Sidebar({
   ]
   return (
     <aside className="sidebar">
-      <div className="traffic-lights" aria-label="Window controls">
-        <span className="traffic red" />
-        <span className="traffic yellow" />
-        <span className="traffic green" />
-      </div>
       <div className="brand">
         <div className="brand-mark" aria-hidden="true">
           <img alt="" height="30" src="/assets/studio-bridge-logo.svg" width="30" />
@@ -2072,7 +2068,7 @@ function LiveView({
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({})
   const [questionReplies, setQuestionReplies] = useState<Record<string, { id: string; text: string; name: string; english?: string }[]>>({})
   const [identity, setIdentity] = useState<"anonymous" | "named">(room.identity?.anonymous === false ? "named" : "anonymous")
-  const [questionLanguage, setQuestionLanguage] = useState<"zh" | "en">("en")
+  const [questionLanguage, setQuestionLanguage] = useState<"zh" | "en">("zh")
   const [identityMenuOpen, setIdentityMenuOpen] = useState(false)
   const [languageMenuOpen, setLanguageMenuOpen] = useState(false)
   useEffect(() => {
@@ -2449,7 +2445,7 @@ function LiveView({
               <div className="feedback-actions">
                 {lessonReactions.map((reaction) => (
                   <button
-                    aria-label={`${reaction.label}, ${feedbackCounts[reaction.id]} reactions`}
+                    aria-label={reaction.label}
                     aria-pressed={feedback === reaction.id}
                     className={feedback === reaction.id ? "selected" : ""}
                     key={reaction.id}
@@ -2460,9 +2456,6 @@ function LiveView({
                     <span aria-hidden="true" className="feedback-emoji">
                       {reaction.emoji}
                     </span>
-                    <small aria-hidden="true" className="reaction-live-count" key={reactionPops[reaction.id] || 0}>
-                      {feedbackCounts[reaction.id]}
-                    </small>
                     {reactionBursts.filter(burst => burst.reaction === reaction.id).map(burst =>
                       <span className="reaction-burst" key={burst.id} aria-hidden="true">
                         {[-2, -1, 0, 1, 2].map((direction, index) =>
@@ -2486,7 +2479,7 @@ function LiveView({
       {questionsOpen && (
         <aside id="live-questions" className="questions-pane" aria-label="Questions sidebar">
           <header className="questions-header">
-            <Icon name="bubble" size={17} />
+            <BulbIcon size={20} />
             <h2>Questions</h2>
             <span className="count-badge">{questionList.length + (liveMode ? 0 : 21)}</span>
           </header>
@@ -2543,9 +2536,10 @@ function LiveView({
                   <div className="question-actions">
                     <button
                       onClick={() => void voteQuestion(question)}
+                      aria-label="Upvote question"
                       type="button"
                     >
-                      <span className="up-arrow">↑</span> {question.votes}
+                      <span className="up-arrow" aria-hidden="true">↑</span> {question.votes}
                     </button>
                     <button type="button" aria-expanded={replyQuestion === question.id} aria-controls={`question-reply-${question.id}`} onClick={() => setReplyQuestion(current => current === question.id ? null : question.id)}>
                       <Icon name="bubble" size={14} /> Reply{questionReplies[question.id]?.length ? ` · ${questionReplies[question.id].length}` : ""}
@@ -2603,6 +2597,12 @@ function LiveView({
             <div className="ask-composer glass">
               <textarea
                 onChange={(event) => setComposer(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+                    event.preventDefault()
+                    void submitQuestion()
+                  }
+                }}
                 placeholder={
                   questionLanguage === "zh" ? "用中文提问…" : "Ask a question…"
                 }
@@ -2799,7 +2799,7 @@ export default function App() {
               title={questionsOpen ? "Hide questions" : "Show questions"}
               onClick={() => setQuestionsOpen(current => !current)}
             >
-              <Icon name="sidebar" size={19} />
+              <BulbIcon size={24} />
             </button>
           )}
           <div className="live-view-container" hidden={section !== "live"}>
@@ -4772,6 +4772,15 @@ export default function LivePeers({
 .presentation-arrows .presentation-arrow:disabled { opacity:1; color:#a2aa9c; background:rgba(52,75,53,.035); }
 .presentation-arrows .presentation-page { min-width:52px; color:#293b2a; font-size:11px; }
 .presentation-arrow:focus-visible { outline:2px solid #638163; outline-offset:2px; }
+
+/* Keep activity controls accessible in short windows. */
+.tutor-activity > * { flex-shrink: 0; }
+.tutor-activity > textarea { flex: 1 0 80px; }
+.tutor-choices { min-height: auto; }
+.embedded-activity-body.extra-activity--artefact { overflow: auto; }
+.artefact-layout { grid-template-rows: minmax(min-content, 1fr); }
+.artefact-details { grid-template-rows: auto minmax(72px, 1fr) auto auto; }
+.artefact-details label:nth-child(2) { grid-template-rows: auto minmax(72px, 1fr); }
 ```
 
 ## tests/create-test-class.mjs
