@@ -126,3 +126,12 @@
 .presentation-arrows .presentation-arrow:disabled { opacity:1; color:#a2aa9c; background:rgba(52,75,53,.035); }
 .presentation-arrows .presentation-page { min-width:52px; color:#293b2a; font-size:11px; }
 .presentation-arrow:focus-visible { outline:2px solid #638163; outline-offset:2px; }
+
+/* Q&A: the tutor's question on screen, drawn like the card in the Questions panel but bigger */
+.qa-spotlight { max-width: 640px; margin: 4px 0 8px; padding: 20px 24px 12px; }
+.qa-spotlight .avatar { width: 48px; height: 48px; font-size: 14px; }
+.qa-spotlight .question-meta strong { font-size: 17px; line-height: 1.25; }
+.qa-spotlight .question-meta small { font-size: 13px; line-height: 1.3; }
+.qa-spotlight .question-text { margin: 18px 0 6px; font-size: clamp(18px, 2vw, 24px); line-height: 1.35; font-weight: 550; }
+.qa-spotlight .question-actions { display: flex; justify-content: space-between; margin-top: 14px; padding-top: 10px; font-size: 14px; color: #73796e; }
+.qa-spotlight .qa-spotlight-slide { color: #456045; font-weight: 550; }
